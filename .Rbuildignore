@@ -1,3 +1,5 @@
+^renv$
+^renv\.lock$
 ^paper-global-squid\.Rproj$
 ^\.Rproj\.user$
 ^README\.Rmd$
