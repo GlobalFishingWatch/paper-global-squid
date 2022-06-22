@@ -1,0 +1,152 @@
+---
+title: "Region Interconnections"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(dplyr)
+library(gtools)
+library(fishwatchr)
+```
+
+
+## Load data in `00_data_startup`  
+  
+Load these datasets  
+`squid_fleet_connections_2` and  
+`squid_carrier_connections_2`  
+  
+ 
+## Interconnected Regions: Squid Vessels
+
+
+```{r}
+
+regions <- c("nw_pacific","se_pacific", "sw_atlantic", "nw_indian"
+)
+
+region_combo_list <- gtools::combinations(
+  n = length(regions),
+  r = 2,
+  v = regions,
+  repeats.allowed = FALSE
+) %>%
+  dplyr::as_tibble(.) %>%
+  purrr::transpose(.)
+```
+
+
+
+```{r}
+squid_region_connections <- dplyr::bind_rows(purrr::map(
+  .x = region_combo_list,
+  .f = region_connection_count,
+  df = squid_fleet_connections_2
+))
+```
+
+
+
+
+# Interconnected Regions: Carrier Vessels
+
+```{r}
+carrier_region_connections <- dplyr::bind_rows(purrr::map(
+  .x = region_combo_list,
+  .f = region_connection_count,
+  df = squid_carrier_connections_2
+))
+```
+
+
+
+#### How many squid vessel never leave region (are endemic)
+#### Note: Using only CHN, JPN, TWN, KOR
+```{r}
+endemic_vessel_byregion <- dplyr::bind_rows(
+  purrr::set_names(
+    purrr::map(
+      .x = regions,
+      .f = endemic_vessel_counts,
+      df = squid_fleet_connections_2
+    ),
+    nm = regions
+  ),
+  .id = "region"
+)
+
+# combine some close knit regions and
+# recalculate fraction.
+# combined_regions <- dplyr::bind_rows(
+#   purrr::set_names(
+#     purrr::map(
+#       .x = list(
+#         c("eqpacific_hs", "galapagos_hs", "peru_hs"),
+#         c("japan", "ncpacific1_hs", "ncpacific2_hs")
+#       ),
+#       .f = endemic_vessel_counts,
+#       df = squid_fleet_connections_2
+#     ),
+#     nm = c("peru_eqpacific_galapagos", "japan_ncpac1, ncpac2")
+#   ),
+#   .id = "region"
+# )
+
+endemic_vessel_byregion # %>%
+  #rbind(combined_regions)
+```
+
+
+### How many carriers are endemic
+
+```{r}
+endemic_carrier_byregion <- dplyr::bind_rows(
+  purrr::set_names(
+    purrr::map(
+      .x = regions,
+      .f = endemic_vessel_counts,
+      df = squid_carrier_connections_2
+    ),
+    nm = regions
+  ),
+  .id = "region"
+)
+endemic_carrier_byregion
+```
+
+### How many vessels frequent different number of regions?
+
+```{r}
+# Only using CHN, KOR, TWN, JPN
+dplyr::bind_rows(
+  purrr::set_names(
+    purrr::map(.x = c(1,2,3,4),
+               .f = ssvid_mult_region,
+               df = squid_fleet_connections_2
+    ),
+    nm = c(1,2,3,4)
+  ),
+  .id = 'num_regions'
+)
+```
+
+```{r}
+# Only using CHN, KOR, TWN
+dplyr::bind_rows(
+  purrr::set_names(
+    purrr::map(.x = c(1,2,3,4),
+               .f = ssvid_mult_region,
+               df = squid_fleet_connections_2 %>% filter(flag != 'JPN')
+    ),
+    nm = c(1,2,3,4)
+  ),
+  .id = 'num_regions'
+)
+```
+
+

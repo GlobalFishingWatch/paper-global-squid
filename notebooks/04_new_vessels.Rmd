@@ -1,0 +1,181 @@
+---
+title: "New Vessels"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(fishwatchr)
+```
+
+## Load data in `00_data_startup`  
+  
+Load this dataset  
+`squid_fleet_connections_2`
+
+
+```{r}
+new_in_year_f <- function(year_list, year) {
+  
+  if (year == 2018) {
+
+  if (( year %in% year_list) & !((year - 1) %in% year_list)) {
+    TRUE
+  } else {
+    FALSE
+  }
+  } else if (year == 2019) {
+    
+  if (( year %in% year_list) & !(2017 %in% year_list) & !(2018 %in% year_list)) {
+    TRUE
+  } else {
+    FALSE
+  }
+  } else if (year == 2020) {
+    
+  if (( year %in% year_list) & !(2017 %in% year_list) & !(2018 %in% year_list) & !(2019 %in% year_list)) {
+    TRUE
+  } else {
+    FALSE
+  }
+  }
+}
+
+old_in_year_f <- function(year_list, year) {
+  if (year == 2018) {
+    if ((year %in% year_list) & (2017 %in% year_list)) {
+      TRUE
+    } else {
+      FALSE
+    }
+  } else if (year == 2019) {
+    if ((year %in% year_list) & ((2017 %in% year_list) | (2018 %in% year_list))) {
+      TRUE
+    } else {
+      FALSE
+    }
+  } else if (year == 2020) {
+    if ((year %in% year_list) & ((2017 %in% year_list) | (2018 %in% year_list) | (2019 %in% year_list))) {
+      TRUE
+    } else {
+      FALSE
+    }
+  }
+}
+
+```
+
+```{r}
+number_in_2017 <- squid_fleet_connections_2 %>%
+  filter(flag %in% c('CHN','JPN','KOR','TWN')) %>%
+  filter(year == 2017) %>%
+  group_by(ssvid) %>%
+  count(.) %>%
+  filter(n > 5) %>%
+  distinct(ssvid) %>%
+  nrow()
+
+# 794 vessels in 2017
+```
+
+
+
+
+```{r}
+new_vessels_count <- squid_fleet_connections_2 %>%
+  filter(flag %in% c('CHN','JPN','KOR','TWN')) %>%
+  #filter(!ssvid %in% inactive_vessels) %>%  #### NOTE REMOVAL OF INACTIVE VESSELS
+  group_by(ssvid, year) %>%
+  count(.) %>%
+  filter(n > 5) %>%
+  distinct(.) %>%
+  group_by(ssvid) %>%
+  summarize(years = list(year)) %>%
+  mutate(new_in_2018 = map_lgl(.x = years, .f = new_in_year_f, year = 2018),
+         new_in_2019 = map_lgl(.x = years, .f = new_in_year_f, year = 2019),
+         new_in_2020 = map_lgl(.x = years, .f = new_in_year_f, year = 2020),
+         old_in_2018 = map_lgl(.x = years, .f = old_in_year_f, year = 2018),
+         old_in_2019 = map_lgl(.x = years, .f = old_in_year_f, year = 2019),
+         old_in_2020 = map_lgl(.x = years, .f = old_in_year_f, year = 2020)) %>%
+  ungroup()
+```
+
+
+
+
+How many vessels
+## Note filtered out CHN, JPN, KOR, TWN
+```{r}
+new_2018 <- new_vessels_count %>% filter(new_in_2018 == TRUE) %>% nrow() # 165
+new_2019 <- new_vessels_count %>% filter(new_in_2019 == TRUE) %>% nrow() # 198
+new_2020 <- new_vessels_count %>% filter(new_in_2020 == TRUE) %>% nrow() # 133
+
+existing_2018 <- new_vessels_count %>% filter(old_in_2018 == TRUE) %>% nrow() # 718
+existing_2019 <- new_vessels_count %>% filter(old_in_2019 == TRUE) %>% nrow() # 782
+existing_2020 <- new_vessels_count %>% filter(old_in_2020 == TRUE) %>% nrow() # 873
+
+number_in_2017 # (from above)
+y <- existing_2018  + new_2018 
+x <- y - existing_2019
+z <- existing_2019 + new_2019 
+w <- z - existing_2020
+v <- existing_2020 + new_2020
+
+
+# 794 in 2017
+# In 2018: existing = 718
+# 718 + 165  = 883
+# lost: 883 - 782 = 101
+# 782 + 198 = 980
+# lost: 980 - 873 = 107
+# 873 + 133 = 1006
+```
+
+
+
+In 2018 there were 
+165 new vessels (not seen in 2017), 
+198 in 2019 (not seen in 2017 and 2018) and 
+133 in 2020 (not seen in 2017, 2018, 2019)
+
+In contrast, there were
+718 vessels in 2018 that also existed in 2017
+782 vessel in 2019 also seen in (2017 and 2018) and
+873 vessels in 2020 also seen in (2017, 2018, 2019)
+
+In 2018 there were 883 vessels (165 were gained)
+In 2019 there were 980 vessels (198 were gained and 101 were lost)
+In 2020 there were 1006 vessels (133 were gained and 107 were lost)
+
+It appears that there is turnover in the fleet, but a general increase in the number of vessels
+
+
+```{r}
+df <- tibble::tibble(year = c(2017,rep(2018, 3), rep(2019, 3), rep(2020, 3)),
+                     count = c(number_in_2017, new_2018, existing_2018, existing_2018-number_in_2017, new_2019, existing_2019, -x, new_2020, existing_2020, -w ),
+                     state = c('retained',rep(c('gained', 'retained', 'lost'), 3))) %>%
+  mutate(state = factor(state, levels = c('gained','retained','lost')))
+```
+
+
+
+### All regions at once
+```{r}
+(new_vessels_bar <- ggplot() +
+  geom_col(data = df, aes(year, count, fill = state)) +
+  scale_y_continuous('Number of MMSI') + 
+  scale_fill_manual('',values = c('#A1D73B','#E6E7EB','#D73BD6')) +
+  theme_gfw() +
+  theme(plot.title.position = 'plot',
+        panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank(),
+        plot.background = element_rect(fill = '#ffffff'),
+        panel.background = element_rect(fill = '#ffffff'),
+        axis.title.x = element_blank()) 
+)
+```

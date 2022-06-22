@@ -1,0 +1,78 @@
+---
+title: "Data Startup"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(bigrquery)
+library(fishwatchr)
+library(here)
+con <- DBI::dbConnect(bigrquery::bigquery(), 
+                      project = "world-fishing-827", 
+                      use_legacy_sql = FALSE)
+```
+
+
+
+Queries for these tables are in the `queries` folder for reference and they
+build upon one another.  
+
+## Datasets
+
+
+Most notebooks require this dataset.
+`02_regulated_fishing`, `03_vessel_counts`, `04_new_vessels`,`05_region_connections`
+```{r}
+squid_fleet_connections_2 <- get_connections_data(
+  type = 'squid') %>%
+  filter(date <= as.Date("2020-12-31", tz = "UTC"))
+
+squid_fleet_connections_2 <- squid_fleet_connections_2 %>%
+  filter(flag %in% c('JPN','TWN','KOR','CHN'))
+
+
+# squid_fleet_connections_2 %>%
+#   group_by(ssvid, aoi) %>%
+#   summarize(total_positions = sum(positions, na.rm = TRUE),
+#             total_hours = sum(total_hours, na.rm = TRUE),
+#             total_fishing_hours = sum(fishing_hours, na.rm = TRUE)) %>%
+#   filter(total_fishing_hours < 24)%>%
+#   arrange(desc(total_hours))
+```
+
+Required for `05_squid_region_connections`
+```{r}
+squid_carrier_connections_2 <- get_connections_data(
+  type = 'carrier') %>%
+  filter(date <= as.Date("2020-12-31", tz = "UTC"))
+```
+
+
+Required for `03_squid_vessel_timelines`
+```{r}
+squid_fleet_port_visits_aoi_2 <- get_connections_data(
+  type = 'squid_ports') 
+
+squid_fleet_port_visits_aoi_2 <- squid_fleet_port_visits_aoi_2 %>%
+  filter(flag %in% c('JPN','TWN','KOR','CHN')) # 7,247 rows
+```
+
+```{r}
+carrier_fleet_port_visits_aoi_2 <- get_connections_data(
+  type = 'carrier_ports') 
+```
+
+Required for `06_squid_timeline_regulations`
+```{r}
+squid_vessel_regulated_regions <- fishwatchr::gfw_query(
+  here::here('queries','squid_vessel_regulated_regions.sql'),
+  save_query = FALSE,
+  run_query = TRUE,
+  con = con
+)$data
+```

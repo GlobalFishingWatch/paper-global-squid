@@ -1,0 +1,231 @@
+---
+title: "Produce Shapes"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse, quietly = TRUE)
+library(bigrquery)
+library(fishwatchr)
+library(here)
+library(mapview)
+library(raster)
+con <- DBI::dbConnect(bigrquery::bigquery(), project = "world-fishing-827", use_legacy_sql = FALSE)
+```
+
+# SQUID REGIONS
+##### Query to identify the hot spots of squid fishing
+
+```{r}
+
+# squid_presence_raster <- fishwatchr::gfw_query(
+#   query = here::here("queries", "squid_presence_raster.sql"),
+#   save_query = FALSE,
+#   run_query = TRUE,
+#   con = con
+# )$data
+
+squid_presence_raster <- fishwatchr::gfw_query(
+  query = "SELECT
+lon,
+lat,
+count(DISTINCT(ssvid)) as counts,
+SUM(IF(night_loitering > 0.5, hours, 0)) AS fishing_hours ,
+SUM(hours) as total_hours
+FROM (
+SELECT
+FLOOR(lon / 0.5) * 0.5 AS lon,
+FLOOR(lat / 0.5 ) * 0.5 AS lat,
+ssvid,
+night_loitering,
+hours
+FROM
+paper_global_squid.squid_vessel_positions_2017_2020_v20220525
+)
+group by 1,2",
+  save_query = FALSE,
+  run_query = TRUE,
+  con = con
+)$data
+
+```
+
+
+##### Use mapview 
+Create an interative location to generate shapes for the primary hotspots
+
+```{r}
+squid_raster_raster <- raster::rasterFromXYZ(squid_presence_raster[, c(1, 2, 4)] %>% filter(fishing_hours > 24 * 1),
+  crs = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
+)
+
+map <- mapview::mapview(squid_raster_raster)
+```
+
+##### Edit the map to draw the polygons
+```{r}
+squid_aoi <- mapedit::editMap(map, targetLayerId = "squid_raster_raster")
+```
+
+##### save polygons as a shapefile
+```{r}
+sf::write_sf(squid_aoi$finished,here::here("data","geodata","squid_regions_v20211014.shp"), "squid_regions_20211014.shp")
+
+# Within QGIS these regions were Differenced again the V11 EEZs from Marine Regions
+# and then Simplified with a tolerance of 0.05. The result was convered to a WKT
+# and uploaded into Bigquery using `upload_squid_regions`
+
+new_aois <- sf::read_sf(here::here('data','geodata','squid_regions_finalized_v20211016.geojson'))
+
+
+ggplot() +
+  geom_gfw_outline(theme = 'light', center = 160) +
+  geom_gfw_land(theme = 'light',
+                center = 160) +
+  geom_sf(data = new_aois  %>%
+      group_by(aoi) %>%
+        summarise(., do_union = TRUE) %>%
+    recenter_sf(., center = 160), 
+  color = NA, 
+  aes(fill = aoi)
+    ) +
+  scale_fill_manual(values = c( "#CC3A8E","#5D69B1", "#58E8C6", "#99C945")) + 
+  theme_gfw_map(theme = 'light')
+```
+
+```{r}
+
+
+gfw_project_raster <- function(data, x = 'lon_bin', y = 'lat_bin', fill, input_crs = '+proj=longlat +datum=WGS84 +no_defs', output_crs = '+proj=eqearth +datum=WGS84 +wktext') {
+  # reproject raster
+  data <- raster::rasterFromXYZ(data[,c(x,y,fill)], crs = input_crs) %>%
+    raster::projectRaster(.,over = TRUE, crs = output_crs) %>%
+    raster::as.data.frame(., xy = TRUE, na.rm = T)
+
+  colnames(data) <- c(x,y,fill)
+
+  return(data)
+}
+
+
+
+recenter_raster <- function(raster_df,
+                            x_lab = "lon_bin",
+                            y_lab = "lat_bin",
+                            fill_lab = "fishing_hours",
+                            res,
+                            center = 0,
+                            proj = '+proj=eqearth +lon_0=0 +wktext') {
+
+  if (!is.character(proj)) {
+    stop('proj must be a valid proj4 string')
+  }
+  shift <- shift_center_r(center = center)
+
+  # shift the raster coordinates
+  output_raster <- raster_df %>%
+    mutate(
+      lon_bin = eval(as.symbol({{x_lab}})) + (res / 2),
+      lat_bin = eval(as.symbol({{y_lab}})) + (res / 2)
+    ) %>%
+    mutate(
+      lon_bin = lon_bin + shift,
+      lon_bin = ifelse(lon_bin > 180, lon_bin - 360, lon_bin)) %>%
+    fishwatchr::gfw_project_raster(data = .,
+                                   x = 'lon_bin',
+                                   y = 'lat_bin',
+                                   fill = fill_lab,
+                                   output_crs = proj)
+
+
+  return(output_raster)
+}
+
+```
+
+
+
+
+# Building the NATIONAL, REGULATED, UNREGULATED shapefile
+
+```{r}
+eezs_sf <- sf::read_sf(here::here('data','geodata','eez_v11.gpkg'))
+russia_far_east_sf <- sf::read_sf(here::here('data','geodata','russian_far_east_eez.geojson'))
+
+filtered_eezs <- eezs_sf %>%
+  filter(!MRGID %in% c(8333,21787,8361,8364,8384,
+                       8311,62589,8401,8363,8381,
+                       48948,8492,8758,8463,8453,
+                       8337,8348,48946,48951,8425,
+                       62596,21791,8365,49000,48997,
+                       48945)) %>%
+  filter(!ISO_TER1 %in% c('RUS','IRN', 'SYC','BRA')) %>%
+  filter(ISO_TER1 %in% c(
+'FLK','ARG','JPN','RUS','OMN',
+'SOM','CHL','PER','YEM','URY',
+'BRA','PAK', 'IND', 'JPN/RUS',
+'ECU')| MRGID %in% c(21796,48950, 48954, 8403, 8426, 8424)) %>%
+  mutate(ISO3 = case_when(is.na(ISO_TER1) & !is.na(ISO_SOV1) & is.na(ISO_SOV2) ~ ISO_SOV1,
+                          is.na(ISO_TER1) & !is.na(ISO_SOV1) & !is.na(ISO_SOV2) & is.na(ISO_TER3) ~ paste0(ISO_SOV1,'-',ISO_TER2),
+                          is.na(ISO_TER1) & !is.na(ISO_SOV1) & !is.na(ISO_SOV2) & !is.na(ISO_TER3) ~ paste0(ISO_SOV1,'-',ISO_TER2,'-',ISO_TER3),
+                              TRUE ~ ISO_TER1)) %>%
+  dplyr::select(region = ISO3) %>%
+  rbind(russia_far_east_sf %>%
+          dplyr::select(region = ISO_TER1,
+                 geom = geometry)) %>%
+  mutate(label = 'NATIONAL') %>%
+  dplyr::select(region, label) 
+```
+
+Relabel squid regions and join to EEZs
+```{r}
+squid_regions <- sf::read_sf(here::here('data','geodata','squid_regions_finalized_v20220525.geojson')) 
+
+squid_regions_and_eezs <- squid_regions %>%
+  mutate(label = case_when(aoi %in% c('nw_indian','sw_atlantic','se_pacific') ~ 'UNREGULATED',
+                           aoi == 'nw_pacific' ~ 'RFMO MANAGED',
+                           TRUE ~ NA_character_)) %>%
+  dplyr::select(region = aoi,
+         label,
+         geom = geometry) %>%
+  rbind(filtered_eezs)
+```
+
+
+```{r}
+# save file to tidy up in QGIS
+# goal in QGIS: 
+# 1. just get outlines for all shapes (no internal boundaries) and  (dissolve by label)
+# 2. remove northernmost Russia EEZ
+
+sf::write_sf(squid_regions_and_eezs, here::here("data","geodata","temporary_squid_regions_and_eezs.shp"), "squid_regions_and_eezs.shp")
+
+# then read back in
+
+# this is the merged dataset... only includes regulatory region info
+merged_squid_regions_and_eezs <- sf::read_sf(here::here("data","geodata","merged_eez_regions_final_v20220525.geojson"))
+# this is the dataset with regions and EEZs unmerged
+squid_regions_and_eezs <- sf::read_sf(here::here("data","geodata","unmerged_eez_regions_final_v20220525.geojson"))
+
+
+# simplify and preserve topology to decrease size
+simple_merged_squid_regions_and_eezs <- rmapshaper::ms_simplify(merged_squid_regions_and_eezs, 
+                                                                     keep = 0.001,
+                                                                     keep_shapes = TRUE)
+simple_squid_regions_and_eezs <- rmapshaper::ms_simplify(squid_regions_and_eezs, 
+                                                                     keep = 0.001,
+                                                                     keep_shapes = TRUE)
+
+# save files
+simple_merged_squid_regions_and_eezs %>%
+  sf::write_sf(., here::here('data','geodata','simple_merged_eez_regions_final_v20220525.geojson'))
+
+simple_squid_regions_and_eezs %>%
+  sf::write_sf(., here::here('data','geodata','simple_eez_regions_final_v20220525.geojson'))
+
+# both of these files are then loaded as WKT into BQ for use.
+```

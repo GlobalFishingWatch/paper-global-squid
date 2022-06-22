@@ -1,0 +1,554 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(here)
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(fishwatchr)
+figure_version = 'v20220525'
+```
+
+
+```{r}
+squid_regions_and_eezs <- sf::read_sf(here::here('data','geodata','simple_merged_eez_regions_final_v20220525.geojson'))
+                                      
+                                      
+```
+
+```{r}
+(final_reg_regions_map <- ggplot() +
+  geom_gfw_outline(center = 160) +
+  geom_sf(data = squid_regions_and_eezs %>%
+            mutate(label = ifelse(label == 'NATIONAL','EEZ', label)) %>%
+            fishwatchr::recenter_sf(center = 160), 
+          aes(fill = label, 
+              color = label),
+          size = 1.5) +
+  geom_gfw_land(center = 160) +
+  scale_fill_manual('', values = c('#204280','#F8BA47','#EE6256')) +
+  scale_color_manual('', values = c('#204280','#F8BA47','#EE6256')) +
+  theme_gfw_map(theme = 'light'))
+
+  save_plots(final_reg_regions_map, 
+           file_name = 'final_reg_regions_map_v20220525',
+           plot_width = 200,
+           plot_height = 120,
+           units = 'mm',
+           dpi = 300,
+           figure_version = figure_version)
+```
+
+
+
+# Make sure to pull this out later
+Put in the data loading section and potentially a config.yaml
+```{r}
+squid_regulatory_positions <- fishwatchr::gfw_query(
+  'SELECT * FROM paper_global_squid.squid_regulatory_positions_eez_v20220525',
+  save_query = FALSE,
+  run_query = TRUE,
+  con = con
+)$data
+
+regulatory_hs_list <- squid_regulatory_positions %>%
+  #filter(region != 'NATIONAL') %>%
+  distinct(ssvid)
+
+connections_hs_list <- squid_fleet_connections_2 %>%
+  distinct(ssvid) 
+
+squid_regulatory_positions %>%
+  filter(ssvid %in% c(regulatory_hs_list %>%
+           filter(!ssvid %in% connections_hs_list$ssvid) %>%
+           pull(ssvid))) %>%
+  count(ssvid, region)
+
+squid_regulatory_positions %>%
+  mutate(flag = ifelse(is.na(flag), 'UNK', flag)) %>%
+  #filter(region != 'NATIONAL') %>%
+  distinct(ssvid, flag) %>%
+  count(flag, sort = TRUE)
+  
+# squid_regulatory_positions %>%
+#   filter(!flag %in% c('CHN','TWN','JPN','KOR')) %>%
+#   group_by(ssvid, flag, region) %>%
+#   summarize(total_hours = sum(regional_total_hours, na.rm = TRUE),
+#             total_positions = sum(regional_positions, na.rm = TRUE),.groups = 'drop') %>%
+#   mutate(region = ifelse(region == 'NATIONAL', 'NATIONAL', 'HIGH SEAS')) %>%
+#   group_by(flag, region) %>%
+#   summarize(total_hours = sum(total_hours, na.rm = TRUE),
+#             total_positions = sum(total_positions, na.rm = TRUE),.groups = 'drop') %>%
+#   group_by(flag) %>%
+#   mutate(total_hours_all = sum(total_hours),
+#          fraction_high_seas = )
+
+squid_regulatory_positions %>%
+  filter(flag %in% c('CHN','TWN','JPN','KOR')) %>%
+  group_by(ssvid, flag, region) %>%
+  summarize(total_hours = sum(regional_total_hours, na.rm = TRUE),
+            total_positions = sum(regional_positions, na.rm = TRUE),.groups = 'drop') %>%
+  mutate(region = ifelse(region == 'NATIONAL', 'NATIONAL', 'HIGH SEAS')) %>%
+  group_by(flag, region) %>%
+  summarize(total_hours = sum(total_hours, na.rm = TRUE),
+            total_positions = sum(total_positions, na.rm = TRUE),.groups = 'drop')
+```
+
+```{r}
+squid_arg_diff_positions <- fishwatchr::gfw_query(
+  'SELECT * FROM paper_global_squid.squid_argentina_diff_positions_v20220525',
+  save_query = FALSE,
+  run_query = TRUE,
+  con = con
+)$data
+
+```
+
+### Using Argentina Boundary
+
+Get the number of hours that were mistakenly (according to Argentina) included
+within the EEZ (NATIONAL) that are actually in the high seas (UNREGULATED)
+
+```{r}
+hours_in_arg_gap <- squid_arg_diff_positions %>%
+  filter(flag %in% c('TWN','JPN','KOR','CHN')) %>%
+  summarize(total_hours = sum(regional_total_hours, na.rm = TRUE),
+            total_fishing_hours = sum(regional_fishing_hours, na.rm = TRUE),
+            .groups = 'drop')
+hours_in_arg_gap
+# total_hours = 91177.01
+# total_fishing_hours = 33928.9
+```
+
+## Calculate hours of effort in regions 
+Adjusted is adjusted for Argentina EEZ (less national fishing, more unregulated)
+```{r}
+squid_regulatory_positions_filtered <- squid_regulatory_positions %>%
+  filter(flag %in% c('JPN','KOR','TWN','CHN')) %>%
+  filter(region %in% c('NATIONAL','RFMO MANAGED','UNREGULATED')) #%>%
+  # mutate(region = ifelse(!is.na(is_npfc_regulated) & region == 'NATIONAL', 'RFMO REGULATED', region))
+
+squid_regulatory_positions_filtered %>%
+  group_by(region) %>%
+  summarize(total_hours = sum(regional_total_hours),
+            total_fishing_hours = sum(regional_fishing_hours)) %>%
+    ungroup() %>%
+    mutate(total_hours_adj = case_when(region == 'NATIONAL' ~ total_hours - hours_in_arg_gap$total_hours,
+                                             region == 'UNREGULATED' ~ total_hours + hours_in_arg_gap$total_hours,
+                                             TRUE ~ total_hours),
+           total_fishing_hours_adj = case_when(region == 'NATIONAL' ~ total_fishing_hours - hours_in_arg_gap$total_fishing_hours,
+                                                region == 'UNREGULATED' ~ total_fishing_hours + hours_in_arg_gap$total_fishing_hours,
+                                                TRUE ~ total_fishing_hours)) %>% 
+  mutate(frac_total_hour = total_hours/sum(total_hours),
+         frac_fishing_hours = total_fishing_hours/sum(total_fishing_hours),
+         frac_total_hour_adj = total_hours_adj/sum(total_hours_adj),
+         frac_fishing_hours_adj = total_fishing_hours_adj/sum(total_fishing_hours_adj))
+```
+
+
+
+#### Total Fishing Hours (using Marine Regions)
+
+```{r}
+(total_fishing_hours_reg <- squid_regulatory_positions_filtered %>%
+   mutate(year = as.numeric(format(date, '%Y'))) %>%
+  filter(year < 2021) %>%
+  group_by(year, flag, region) %>%
+  summarise(total_fishing_hours = sum(regional_fishing_hours, na.rm = TRUE)) %>%
+  mutate(flag = case_when(flag == 'JPN' ~ 'Japan',
+                          flag == 'TWN' ~ 'Chinese Taipei',
+                          flag == 'CHN' ~ 'China',
+                          flag == 'KOR' ~ 'Republic of Korea',
+                          TRUE ~ NA_character_),
+         region = case_when(region == 'NATIONAL' ~ 'EEZ',
+                            TRUE ~ region)) %>%
+  ggplot() +
+  geom_col(aes(year, total_fishing_hours, fill = flag)) +
+  #scale_fill_manual('', values = fishwatchr::gfw_palettes$chart[c(TRUE, FALSE)]) +
+  scale_fill_manual('',values = c('#EA67B7', '#5FCD8D', '#EFAB68', '#5C98D0')) +
+  scale_y_continuous('Total Fishing Hours', limits = c(0, 1250000)) +
+  theme_gfw() +
+  theme(plot.title.position = 'plot',
+        panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank(),
+        plot.background = element_rect(fill = '#ffffff'),
+        panel.background = element_rect(fill = '#ffffff'),
+        axis.title.x = element_blank(),
+        plot.caption = element_text(size = 7, hjust = 1)) +
+  facet_wrap(~ region))
+```
+
+
+```{r}
+save_plots(total_fishing_hours_reg, 
+           file_name = 'total_fishing_hours_reg_v20220525',
+           plot_width = 200,
+           plot_height = 80,
+           units = 'mm',
+           dpi = 300,
+           figure_version = figure_version)
+```
+
+
+# Have fishing hours been increasing over time?
+## IN SUPPLEMENT
+```{r}
+(total_fishing_hours_by_reg_region <- squid_regulatory_positions_filtered %>%
+  mutate(year = as.numeric(format(date, '%Y'))) %>%
+  filter(year < 2021) %>%
+  group_by(year, region) %>%
+  summarise(total_fishing_hours = sum(regional_fishing_hours, na.rm = TRUE), .groups = 'drop') %>%
+  mutate(region = case_when(region == 'NATIONAL' ~ 'EEZ',
+                            TRUE ~ region)) %>%
+  ggplot() +
+  geom_col(aes(year, total_fishing_hours, fill = region)) +
+  #scale_fill_manual('', values = fishwatchr::gfw_palettes$chart[c(1,5,7)]) +
+  scale_fill_manual('', values = c('#204280','#F8BA47','#EE6256')) + 
+  scale_y_continuous('Total Fishing Hours') +
+  theme_gfw() +
+  theme(plot.title.position = 'plot',
+        axis.title.x = element_blank(),
+        legend.position = 'bottom',
+        plot.background = element_rect(fill = '#ffffff'),
+        panel.background = element_rect(fill = '#ffffff'),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank(),
+        plot.caption = element_text(size = 7, hjust = 1))
+)
+```
+
+```{r}
+save_plots(total_fishing_hours_by_reg_region, 
+           file_name = 'total_fishing_hours_reg_stacked_v20220525',
+           plot_width = 120,
+           plot_height = 120,
+           units = 'mm',
+           dpi = 300,
+           figure_version = figure_version)
+```
+
+
+
+#### Fraction of Time Spent in Different Regulatory Regimes
+
+```{r}
+(fraction_fish_hrs_region <- squid_regulatory_positions_filtered %>%
+  mutate(year = as.numeric(format(date, '%Y'))) %>%
+  filter(year < 2021) %>%
+  dplyr::select(year, flag, area, region, regional_fishing_hours) %>%
+  mutate(region = case_when(region == 'NATIONAL' & flag == area ~ 'Domestic EEZ',
+                            region == 'NATIONAL' & flag != area ~ 'Foreign EEZ',
+                            region == 'NATIONAL' & is.na(area) ~ NA_character_,
+                            TRUE ~ region)) %>%
+  filter(!is.na(region)) %>%
+  group_by(year, flag, region) %>%
+  summarize(hours = sum(regional_fishing_hours, na.rm = TRUE)) %>%
+  ungroup() %>%
+  inner_join(squid_regulatory_positions_filtered %>%
+  mutate(year = as.numeric(format(date, '%Y'))) %>%
+  filter(year < 2021) %>%
+  dplyr::select(year, flag, regional_fishing_hours) %>%
+  group_by(year, flag) %>%
+  summarize(total_hours = sum(regional_fishing_hours, na.rm = TRUE)) %>%
+  ungroup(), 
+  by = c('year' = 'year','flag' = 'flag')) %>%
+  mutate(frac = hours/total_hours) %>%
+  mutate(flag = case_when(flag == 'JPN' ~ 'Japan',
+                          flag == 'TWN' ~ 'Chinese Taipei',
+                          flag == 'CHN' ~ 'China',
+                          flag == 'KOR' ~ 'Republic of Korea',
+                          TRUE ~ NA_character_),
+                  region = case_when(region == 'Domestic EEZ' ~ 'DOMESTIC EEZ',
+                            region == 'Foreign EEZ' ~ 'FOREIGN EEZ',
+                            TRUE ~ region)) %>%
+  ggplot() +
+  geom_col(aes(year, frac, fill = region)) +
+  scale_fill_manual('', values = c('#204280','#7277A4','#F8BA47','#EE6256')) +
+  #scale_fill_manual('', values = c("#204280", "#5d69B1", "#ee6256", "#f8ba47")) +
+  scale_y_continuous('Fraction of Fishing Hours') +
+  theme_gfw() +
+  theme(plot.title.position = 'plot',
+        panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank(),
+        plot.background = element_rect(fill = '#ffffff'),
+        panel.background = element_rect(fill = '#ffffff'),
+        axis.title.x = element_blank(),
+        legend.position = 'bottom',
+        plot.caption = element_text(size = 7, hjust = 1)) +
+  facet_wrap(~flag)
+  )
+
+
+
+
+table_of_data <- squid_regulatory_positions_filtered %>%
+  mutate(year = as.numeric(format(date, '%Y'))) %>%
+  filter(year < 2021) %>%
+  dplyr::select(year, flag, area, region, regional_fishing_hours) %>%
+  mutate(region = case_when(region == 'NATIONAL' & flag == area ~ 'Domestic EEZ',
+                            region == 'NATIONAL' & flag != area ~ 'Foreign EEZ',
+                            region == 'NATIONAL' & is.na(area) ~ NA_character_,
+                            TRUE ~ region)) %>%
+  filter(!is.na(region)) %>%
+  group_by(year, flag, region) %>%
+  summarize(hours = sum(regional_fishing_hours, na.rm = TRUE)) %>%
+  ungroup() %>%
+  inner_join(squid_regulatory_positions_filtered %>%
+  mutate(year = as.numeric(format(date, '%Y'))) %>%
+  filter(year < 2021) %>%
+  dplyr::select(year, flag, regional_fishing_hours) %>%
+  group_by(year, flag) %>%
+  summarize(total_hours = sum(regional_fishing_hours, na.rm = TRUE)) %>%
+  ungroup(), 
+  by = c('year' = 'year','flag' = 'flag')) %>%
+  mutate(frac = hours/total_hours) %>%
+  mutate(flag = case_when(flag == 'JPN' ~ 'Japan',
+                          flag == 'TWN' ~ 'Chinese Taipei',
+                          flag == 'CHN' ~ 'China',
+                          flag == 'KOR' ~ 'Republic of Korea',
+                          TRUE ~ NA_character_),
+        region = case_when(region == 'Domestic EEZ' ~ 'DOMESTIC EEZ',
+                            region == 'Foreign EEZ' ~ 'FOREIGN EEZ',
+                            TRUE ~ region)) %>%
+  filter(region %in% c('DOMESTIC EEZ','FOREIGN EEZ'))
+
+```
+
+
+```{r}
+save_plots(fraction_fish_hrs_region, 
+           file_name = 'frac_fishing_hours_reg_national_eez_v20220525',
+           plot_width = 125,
+           plot_height = 130,
+           units = 'mm',
+           dpi = 300,
+           figure_version = figure_version)
+```
+
+
+# Top 4 EEZs represent 99% of the fishing in EEZs
+```{r}
+squid_regulatory_positions_filtered %>%
+  mutate(year = as.numeric(format(date, '%Y'))) %>%
+  filter(year < 2021 & 
+         flag %in% c('CHN','KOR','TWN','JPN') & 
+         region == 'NATIONAL') %>%
+  group_by(flag, area,.drop = TRUE) %>%
+  summarise(fishing_hours = sum(regional_fishing_hours, na.rm = TRUE), .groups = 'drop') %>%
+  mutate(flag = case_when(flag == 'JPN' ~ 'Japan',
+                          flag == 'TWN' ~ 'Chinese Taipei',
+                          flag == 'CHN' ~ 'China',
+                          flag == 'KOR' ~ 'Republic of Korea',
+                          TRUE ~ NA_character_)) %>%
+  group_by(area, .drop = TRUE) %>%
+  summarize(total_hours = sum(fishing_hours)) %>%
+  mutate(total = sum(total_hours),
+         fraction = total_hours/total) %>%
+  arrange(desc(fraction)) %>%
+  mutate(cumulative_sum = cumsum(fraction))
+```
+
+
+
+
+```{r}
+
+missing_levels <- tibble::tibble(flag = c('Japan','Japan'),
+                                 area = c('ARG','FLK'),
+                                 fishing_hours = c(0,0))
+
+
+(fishing_in_eezs_byflag <- squid_regulatory_positions_filtered %>%
+  mutate(year = as.numeric(format(date, '%Y'))) %>%
+  filter(year < 2021 & 
+         flag %in% c('CHN','KOR','TWN','JPN') & 
+         region == 'NATIONAL') %>%
+  group_by(flag, area) %>%
+  summarise(fishing_hours = sum(regional_fishing_hours, na.rm = TRUE), .groups = 'drop') %>%
+  mutate(flag = case_when(flag == 'JPN' ~ 'Japan',
+                          flag == 'TWN' ~ 'Chinese Taipei',
+                          flag == 'CHN' ~ 'China',
+                          flag == 'KOR' ~ 'Republic of Korea',
+                          TRUE ~ NA_character_)) %>%
+  filter(fishing_hours > 24 & area %in% c('FLK','ARG','JPN','RUS')) %>%
+  rbind(missing_levels) %>%
+  mutate(area = case_when(area == 'FLK' ~ 'Falkland Islands/Malvinas',
+                          area == 'ARG' ~ 'Argentina',
+                          area == 'JPN' ~ 'Japan',
+                          area == 'RUS' ~ 'Russia',
+                          TRUE ~ NA_character_)) %>%
+ggplot() +
+  geom_col(aes(area, fishing_hours, fill = flag), position = position_dodge()) +
+  scale_fill_manual('',values = c('#EA67B7', '#5FCD8D', '#EFAB68', '#5C98D0')) +
+  #geom_hline(yintercept = 5263) + 
+  scale_x_discrete('') +
+  scale_y_continuous('Fishing Hours') +
+  theme_gfw() +
+  theme(panel.background = element_rect(fill = '#ffffff'),
+        plot.background = element_rect(fill = '#ffffff'),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.position = 'bottom')
+)
+
+```
+
+
+```{r}
+save_plots(fishing_in_eezs_byflag, 
+           file_name = 'fishing_hours_ineez_byflag_v20220525',
+           output_type = '.png',
+           plot_width = 160,
+           plot_height = 130,
+           units = 'mm',
+           dpi = 300,
+           figure_version = figure_version)
+```
+
+
+
+
+```{r}
+squid_regulatory_positions <- fishwatchr::gfw_query(
+  'SELECT * FROM `paper_global_squid.squid_regulatory_positions_eez_v20220525`',
+  save_query = FALSE,
+  run_query = TRUE,
+  con = con
+)$data
+
+squid_arg_diff_positions <- fishwatchr::gfw_query(
+  'SELECT * FROM `paper_global_squid.squid_argentina_diff_positions_v20220525`',
+  save_query = FALSE,
+  run_query = TRUE,
+  con = con
+)$data
+```
+
+```{r}
+squid_regulatory_positions_filtered <- squid_regulatory_positions %>%
+  filter(flag %in% c('JPN','KOR','TWN','CHN')) %>%
+  filter(region %in% c('NATIONAL','REGULATED','UNREGULATED'))
+
+```
+
+
+
+
+
+
+```{r}
+missing_levels <- tibble::tibble(flag = c('Japan','Japan'),
+                                 area = c('ARG','FLK'),
+                                 fishing_hours = c(0,0))
+
+(fishing_in_eezs_byflag_MR_eez <- squid_regulatory_positions_filtered %>%
+   filter(!area %in% c('nw_indian','nw_pacific','se_pacific','sw_atlantic')) %>%
+  group_by(flag, area) %>%
+  summarise(fishing_hours = sum(regional_fishing_hours, na.rm = TRUE), .groups = 'drop') %>%
+  mutate(flag = case_when(flag == 'JPN' ~ 'Japan',
+                          flag == 'TWN' ~ 'Chinese Taipei',
+                          flag == 'CHN' ~ 'China',
+                          flag == 'KOR' ~ 'Republic of Korea',
+                          TRUE ~ NA_character_)) %>%
+  filter(fishing_hours > 24 & area %in% c('FLK','ARG','JPN','RUS')) %>%
+  rbind(missing_levels) %>%  
+  mutate(area = case_when(area == 'FLK' ~ 'Falkland Islands/Malvinas',
+                          area == 'ARG' ~ 'Argentina',
+                          area == 'JPN' ~ 'Japan',
+                          area == 'RUS' ~ 'Russia',
+                          TRUE ~ NA_character_)) %>%
+ggplot() +
+  geom_col(aes(area, fishing_hours, fill = flag), position = position_dodge()) +
+  scale_fill_manual('',values = c('#EA67B7', '#5FCD8D', '#EFAB68', '#5C98D0')) +
+  #geom_hline(yintercept = 5263) + 
+  scale_x_discrete('') +
+  scale_y_continuous('Fishing Hours') +
+  theme_gfw() +
+  theme(panel.background = element_rect(fill = '#ffffff'),
+        plot.background = element_rect(fill = '#ffffff'),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank())
+)
+#China in Argentina 13545.17889
+# Republic of Korea	4584.85000
+# Taiwan 14969.55694
+#
+```
+
+
+
+
+
+# Correcting for Argentina boundary (using Argentina boundary)
+```{r}
+(fishing_in_eezs_byflag_ARG_eez <- squid_regulatory_positions_filtered %>%
+  mutate(year = format(date, '%Y')) %>%
+  filter(!area %in% c('nw_indian','nw_pacific','se_pacific','sw_atlantic')) %>%
+  filter(year < 2021) %>%
+  group_by(flag, area) %>%
+  summarise(fishing_hours = sum(regional_fishing_hours, na.rm = TRUE), .groups = 'drop') %>%
+  left_join(squid_arg_diff_positions %>%
+  mutate(year = format(date, '%Y')) %>%
+  mutate(area = rep('ARG', nrow(.))) %>%
+  filter(flag %in% c('CHN','JPN','TWN','KOR')) %>%
+  filter(year < 2021) %>%
+  group_by(flag, area) %>%
+  summarise(total_fishing_hours = sum(regional_fishing_hours, na.rm = TRUE), .groups = 'drop'), by = c('flag')) %>%
+  mutate(regional_fishing_hours = case_when(area.x == 'ARG' & area.y == 'ARG' ~ fishing_hours - total_fishing_hours,
+                                 #region.x == 'UNREGULATED' & region.y == 'UNREGULATED' ~ total_fishing_hours.x + total_fishing_hours.y,
+                                 TRUE ~ fishing_hours)) %>%
+  mutate(flag = case_when(flag == 'JPN' ~ 'Japan',
+                          flag == 'TWN' ~ 'Chinese Taipei',
+                          flag == 'CHN' ~ 'China',
+                          flag == 'KOR' ~ 'Republic of Korea',
+                          TRUE ~ NA_character_)) %>%
+  filter(fishing_hours > 24 & area.x %in% c('FLK','ARG','JPN','RUS')) %>%
+  select(flag, area = area.x,  fishing_hours = regional_fishing_hours) %>%
+  rbind(missing_levels) %>%  
+  mutate(area = case_when(area == 'FLK' ~ 'Falkland Islands/Malvinas',
+                          area == 'ARG' ~ 'Argentina',
+                          area == 'JPN' ~ 'Japan',
+                          area == 'RUS' ~ 'Russia',
+                          TRUE ~ NA_character_)) %>%
+  mutate(fishing_hours = ifelse(fishing_hours < 0, 0, fishing_hours)) %>%
+ggplot() +
+  geom_col(aes(area, fishing_hours, fill = flag), position = position_dodge()) +
+  scale_fill_manual('',values = c('#EA67B7', '#5FCD8D', '#EFAB68', '#5C98D0')) +
+  scale_x_discrete('') +
+  scale_y_continuous('Fishing Hours') +
+  theme_gfw() +
+  theme(panel.background = element_rect(fill = '#ffffff'),
+        plot.background = element_rect(fill = '#ffffff'),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank())
+)
+# China in Argentina -903.625833
+# Korea -1.628611
+#Taiwan  111.380000
+111.38/14969.55694
+```
+
+
+```{r}
+(fishing_in_eez_final <- fishing_in_eezs_byflag_MR_eez +  fishing_in_eezs_byflag_ARG_eez + patchwork::plot_layout(ncol = 2, nrow = 1, guides = 'collect') + patchwork::plot_annotation(tag_levels = 'A'))
+```
+
+
+```{r}
+save_plots(fishing_in_eez_final, 
+           file_name = 'fishing_in_eezs_byflag_ARG_v20220525',
+           output_type = 'png',
+           plot_width = 250,
+           plot_height = 120,
+           units = 'mm',
+           dpi = 300,
+           figure_version = figure_version)
+```
+

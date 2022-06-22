@@ -1,0 +1,133 @@
+---
+title: "LU RONG YUAN YU YUN 008 track"
+output: html_document
+date: '2022-06-14'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(bigrquery)
+library(fishwatchr)
+library(here)
+con <- DBI::dbConnect(bigrquery::bigquery(), 
+                      project = "world-fishing-827", 
+                      use_legacy_sql = FALSE)
+```
+
+
+```{r}
+lurongyuanyuyun008 <- fishwatchr::gfw_query(query = "
+SELECT
+seg_id,
+  lon,
+  lat,
+  timestamp
+FROM
+  `world-fishing-827.pipe_production_v20201001.research_messages`
+WHERE
+_PARTITIONTIME BETWEEN TIMESTAMP('2019-01-01') AND TIMESTAMP('2021-12-31') AND
+ssvid IN ('412336831','412336888') AND
+seg_id in (SELECT seg_id FROM pipe_production_v20201001.research_segs
+WHERE good_seg IS TRUE AND overlapping_and_short IS FALSE)
+AND seg_id IN (
+SELECT
+seg_id 
+FROM
+pipe_production_v20201001.segment_info
+WHERE
+vessel_id IN 
+('a8cea29a9-9708-52ed-a978-9552ac4bc2ba',
+'9413fa17e-ea8a-496e-f668-873a08549975',
+'5497d58ea-afa1-4e17-55d5-af38a7df341f',
+'7d010dc94-420d-89de-764a-f0da75a51396',
+'ee9de6b0c-c9d2-c194-d8f1-e22a3550d97b',
+'d327074e0-0479-fefe-5db6-7e5125f5ed4d',
+'2490ae29b-be5e-8de5-6100-a89368d31c14',
+'d327074e0-0479-fefe-5db6-7e5125f5ed4d'))",
+save_query = FALSE,
+run_query = TRUE, 
+con = con)$data
+```
+
+
+
+```{r}
+track1 <- lurongyuanyuyun008 %>%
+  arrange(timestamp) %>%
+  mutate(year = format(timestamp, '%Y')) %>%
+  filter(seg_id == '412336888-2020-05-17T02:11:53.000000Z') %>%
+  sf::st_as_sf(coords = c('lon','lat'),crs = 4326) %>%
+  group_by(seg_id, year) %>%
+  summarize(do_union = FALSE) %>%
+  st_cast("LINESTRING") %>%
+  recenter_sf(center = 160, buffer = 0)
+
+track2 <- lurongyuanyuyun008 %>%
+  arrange(timestamp) %>%
+  mutate(year = format(timestamp, '%Y')) %>%
+  filter(seg_id != '412336888-2020-05-17T02:11:53.000000Z') %>%
+  sf::st_as_sf(coords = c('lon','lat'),crs = 4326) %>%
+  group_by(seg_id, year) %>%
+  summarize(do_union = FALSE) %>%
+  st_cast("LINESTRING") %>%
+  recenter_sf(center = 160)
+
+
+
+(nk_track_byyear <- ggplot() +
+    fishwatchr::geom_gfw_outline(center = 160) +
+    fishwatchr::geom_gfw_land(center = 160) + 
+    geom_sf(data = track1,
+            aes(color = year),
+            show.legend = "line") +
+    geom_sf(data = track2,
+            aes(color = year),
+            show.legend = "line") +
+    scale_color_discrete('') +
+    fishwatchr::theme_gfw_map(theme = 'light') +
+    facet_wrap(~year, ncol = 1)
+)
+  
+(nk_track <-   ggplot() +
+    fishwatchr::geom_gfw_outline(center = 160) +
+    fishwatchr::geom_gfw_land(center = 160) + 
+    geom_sf(data = track1,
+            aes(color = year),
+            show.legend = "line") +
+    geom_sf(data = track2,
+            aes(color = year),
+            show.legend = "line") +
+    scale_color_discrete('') +
+    fishwatchr::theme_gfw_map(theme = 'light')
+)
+
+```
+
+
+
+```{r}
+save_plots(nk_track_byyear, 
+         file_name = 'nk_track_byyear_v20220525',
+         output_type = '.png',
+         plot_width = 200,
+         plot_height = 300,
+         units = 'mm',
+         dpi = 300,
+         figure_version = figure_version)
+
+save_plots(nk_track, 
+         file_name = 'nk_track_v20220525',
+         output_type = '.png',
+         plot_width = 200,
+         plot_height = 120,
+         units = 'mm',
+         dpi = 300,
+         figure_version = figure_version)
+```
+
+
+

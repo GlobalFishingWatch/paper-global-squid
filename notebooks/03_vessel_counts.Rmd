@@ -1,0 +1,142 @@
+---
+title: "Vessel Counts"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(bigrquery)
+library(fishwatchr)
+library(here)
+con <- DBI::dbConnect(bigrquery::bigquery(), 
+                      project = "world-fishing-827", 
+                      use_legacy_sql = FALSE)
+
+figure_version = 'v20220525'
+```
+
+
+# Total Squid Vessel List
+```{r}
+squid_vessel_list <- fishwatchr::gfw_query('SELECT * FROM paper_global_squid.final_squid_vessel_list_v20220525',
+                      save_query = FALSE,run_query = TRUE, con = con)$data
+
+squid_vessel_list %>%
+  distinct(ssvid) %>%
+  count()
+```
+
+
+
+# Pull Data
+```{r}
+squid_fleet_connections_2 <- get_connections_data(
+  type = 'squid') %>%
+  filter(date <= as.Date("2020-12-31", tz = "UTC"))
+
+
+squid_vessel_list %>%
+  distinct(ssvid) %>%
+  filter(!ssvid %in% c(squid_fleet_connections_2 %>%
+  distinct(ssvid) %>%
+  pull(ssvid)))
+
+  count()
+# total = 1511
+
+squid_fleet_connections_2 %>%
+  distinct(ssvid, flag) %>%
+  count(flag, sort = TRUE) %>%
+  filter(flag != 'ARG') %>%
+  mutate(cumulative = cumsum(n),
+         total = sum(n),
+         frac = cumulative/total)
+# Of the 1511 we need to remove the ARG flag (49 mmsi) because of the Marine Regions issue
+# we will also remove 33 vessels for which we do not know the flag state. Leaving
+# 1429 vessels. Of these vessels 98% are flagged to JPN, CHN, TWN, KOR. The remaining
+# set of vessels are spread across a 17 different flags (with 10 flags represented by a single vessel)
+# The confidence in these flag assignments is not hight and to simplify the analysis this 2% of the vessels were 
+# removed leaving a total of 1394 vessels (mmsi).
+
+squid_fleet_connections_2 <- squid_fleet_connections_2 %>%
+  filter(flag %in% c('JPN','TWN','KOR','CHN'))
+
+squid_fleet_connections_2 %>%
+  distinct(ssvid) %>%
+  count()
+# 1394
+
+
+
+```
+
+
+### Number of Fishing Hours by Flag
+```{r}
+squid_fleet_connections_2 %>%
+  filter(flag %in% c('JPN','KOR','CHN','TWN')) %>%
+  group_by(flag) %>%
+  summarize(fishing_hours = sum(fishing_hours, na.rm = TRUE),.groups = 'drop') %>%
+  mutate(all_fishing_hours = sum(fishing_hours),
+         frac_fishing_hours = fishing_hours/all_fishing_hours)
+```
+
+
+### Vessel Counts
+
+```{r, eval=FALSE}
+
+fix_labels <- c("Chinese Taipei", "Unknown", "Republic of Korea")
+names(fix_labels) <- c("TWN", "UNK", "KOR")
+
+(counts_by_year <- squid_fleet_connections_2 %>%
+  distinct(aoi, flag, ssvid, year) %>%
+  filter(flag != "ARG") %>%
+  count(aoi, flag, year) %>%
+  ungroup() %>%
+  mutate(
+    country = countrycode::countrycode(flag,
+      origin = "iso3c",
+      destination = "country.name",
+      custom_match = fix_labels
+    ),
+    country = ifelse(is.na(country), "Unknown", country),
+    country = ifelse((n < 10 &
+      !flag %in% c("KOR", "JPN", "TWN", "CHN")) |
+      country == "Unknown", "Others", country)
+  ) %>%
+  group_by(aoi, year) %>%
+  summarize(n = sum(n, na.rm = TRUE)) %>%
+  mutate(aoi = case_when(
+    aoi == "sw_atlantic" ~ "SW Atlantic Ocean",
+    aoi == "se_pacific" ~ "SE Pacific Ocean",
+    aoi == "nw_pacific" ~ "NW Pacific Ocean",
+    aoi == "nw_indian" ~ "NW Indian Ocean",
+    TRUE ~ NA_character_
+  )) %>%
+  ggplot() +
+  geom_col(aes(year, n),
+           fill = fishwatchr::gfw_palettes$chart[1]) +
+  geom_text(aes(year, n, label = n), 
+            nudge_y = 40,
+            size = 2) +
+  scale_y_continuous('Number of MMSI', limits = c(0, 700), expand = c(0,0)) + 
+  scale_x_continuous('') +
+  theme_gfw() +
+  theme(strip.text = element_text(hjust = 0),
+        plot.background = element_rect(fill = '#ffffff'),
+        panel.background = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_rect(color = 'grey91', 
+                                    fill = NA)) +
+  facet_wrap(~aoi)
+)
+```

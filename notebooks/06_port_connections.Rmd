@@ -1,0 +1,53 @@
+---
+title: "Port Connections"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+regions <- c("nw_pacific","se_pacific", "sw_atlantic", "nw_indian"
+)
+
+visit_aoi_flag_counts <- purrr::set_names(
+  purrr::map(
+    .x = regions,
+    .f = aggregate_port_visits,
+    df = squid_fleet_port_visits_aoi_2 %>% filter(flag %in% c('JPN','KOR','TWN','CHN'))
+  ),
+  nm = regions
+)
+
+visit_aoi_port_counts <- purrr::set_names(
+  purrr::map(
+    .x = regions,
+    .f = specific_ports_byaoi,
+    df = squid_fleet_port_visits_aoi_2 %>% filter(flag %in% c('JPN','KOR','TWN','CHN'))
+  ),
+  nm = regions
+)
+```
+
+
+```{r}
+carrier_visit_aoi_flag_counts <- purrr::set_names(
+  purrr::map(
+    .x = regions,
+    .f = aggregate_port_visits,
+    df = carrier_fleet_port_visits_aoi_2
+  ),
+  nm = regions
+)
+
+carrier_visit_aoi_port_counts <- purrr::set_names(
+  purrr::map(
+    .x = regions,
+    .f = specific_ports_byaoi,
+    df = carrier_fleet_port_visits_aoi_2
+  ),
+  nm = regions
+)
+```

@@ -1,0 +1,176 @@
+---
+title: "07 Global Squid Raster Map"
+output: html_document
+date: '2022-06-06'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(fishwatchr)
+library(bigrquery)
+library(ggplot2)
+library(dplyr)
+con <- DBI::dbConnect(bigrquery::bigquery(), project = "world-fishing-827", use_legacy_sql = FALSE)
+figure_version = 'v20220525'
+```
+
+
+```{r}
+gfw_project_raster <- function(data, x = "lon_bin", y = "lat_bin", fill, input_crs = "+proj=longlat +datum=WGS84 +no_defs", output_crs = "+proj=eqearth +datum=WGS84 +wktext") {
+  # reproject raster
+  data <- raster::rasterFromXYZ(data[, c(x, y, fill)], crs = input_crs) %>%
+    raster::projectRaster(., over = TRUE, crs = output_crs) %>%
+    raster::as.data.frame(., xy = TRUE, na.rm = T)
+
+  colnames(data) <- c(x, y, fill)
+
+  return(data)
+}
+
+
+recenter_raster <- function(raster_df,
+                            x_lab = "lon_bin",
+                            y_lab = "lat_bin",
+                            fill_lab = "fishing_hours",
+                            res,
+                            center = 0,
+                            proj = '+proj=eqearth +lon_0=0 +wktext') {
+
+  if (!is.character(proj)) {
+    stop('proj must be a valid proj4 string')
+  }
+  shift <- shift_center_r(center = center)
+
+  # shift the raster coordinates
+  output_raster <- raster_df %>%
+    mutate(
+      lon_bin = eval(as.symbol({{x_lab}})) + (res / 2),
+      lat_bin = eval(as.symbol({{y_lab}})) + (res / 2)
+    ) %>%
+    mutate(
+      lon_bin = lon_bin + shift,
+      lon_bin = ifelse(lon_bin > 180, lon_bin - 360, lon_bin)) %>%
+    fishwatchr::gfw_project_raster(data = .,
+                                   x = 'lon_bin',
+                                   y = 'lat_bin',
+                                   fill = fill_lab,
+                                   output_crs = proj)
+
+
+  return(output_raster)
+}
+```
+
+
+
+```{r}
+squid_presence_raster <- fishwatchr::gfw_query(
+  query = "SELECT
+lon,
+lat,
+count(DISTINCT(ssvid)) as counts,
+SUM(IF(night_loitering > 0.5, hours, 0)) AS fishing_hours ,
+SUM(hours) as total_hours
+FROM (
+SELECT
+FLOOR(lon / 0.5) * 0.5 AS lon,
+FLOOR(lat / 0.5 ) * 0.5 AS lat,
+ssvid,
+night_loitering,
+hours
+FROM
+paper_global_squid.squid_vessel_positions_2017_2020_v20220525
+WHERE EXTRACT(YEAR FROM date) < 2021
+)
+group by 1,2",
+  save_query = FALSE,
+  run_query = TRUE,
+  con = con
+)$data
+```
+
+
+```{r}
+squid_regions <- sf::read_sf(here::here('data','geodata','simple_merged_eez_regions_final_v20220525.geojson')) %>%
+  filter(label %in% c('UNREGULATED','RFMO MANAGED'))
+
+```
+
+
+
+#### Generate Global Raster Map
+
+```{r}
+longlat <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84"
+proj_rob = "+proj=robin +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +datum=WGS84 +units=m +no_defs"
+
+squid_presence_raster_df <- squid_presence_raster %>%
+  mutate(fishing_hours = case_when(fishing_hours < 10 ~ 10,
+                                   fishing_hours > 10000 ~ 10000,
+                                   TRUE ~ fishing_hours)) %>%
+  recenter_raster(
+                              x_lab = 'lon',
+                              y_lab = 'lat',
+                              fill_lab = 'fishing_hours',
+                              res = 0.5,
+                              proj = proj_rob,
+                              center = 160)
+
+
+(squid_raster_map <- ggplot() +
+  geom_gfw_outline(center = 160,proj = proj_rob) + 
+  #geom_gfw_eez(center = 160,proj = proj_rob) + 
+  geom_gfw_land(center = 160,proj = proj_rob) +
+  geom_raster(data = squid_presence_raster_df %>% filter(fishing_hours > 24),
+              aes(lon_bin,
+                  lat_bin,
+                  color = log10(fishing_hours),
+                  fill = log10(fishing_hours))) +
+  geom_sf(data = recenter_sf(shp_file = squid_regions %>% filter(label == 'UNREGULATED'),
+                             center = 160, 
+                             proj = proj_rob,
+                             ),
+          fill = NA,
+          color = '#EE6256')+ 
+  geom_sf(data = recenter_sf(shp_file = squid_regions %>% filter(label == 'RFMO MANAGED'),
+                             center = 160, 
+                             proj = proj_rob,
+                             ),
+          fill = NA,
+          color = '#F8BA47')+ 
+  scale_fill_gradientn('Fishing Hours',
+                       colors = fishwatchr::gfw_palettes$map_presence_dark,
+                       breaks = seq(1,5),
+                       labels = c('1','10','100','1K','10K'),
+                       limits = c(1,5),
+                       oob = scales::squish,
+                       guide = guide_colorbar(frame.colour = "grey50", ticks.colour = "grey15")) +
+  scale_color_gradientn('Fishing Hours', 
+                        colors = fishwatchr::gfw_palettes$map_presence_dark,
+                        breaks = seq(1,5),
+                        labels = c('1','10','100','1K','10K'),
+                        limits = c(1,5),
+                        oob = scales::squish) +
+  theme_gfw_map(theme = 'light') +
+  theme(legend.title = element_text(vjust = 1))
+)
+```
+
+```{r}
+save_plots(plot_list = squid_raster_map,file_name = 'global_squid_raster_map',
+           plot_width = 250,
+           plot_height = 130,
+           units = 'mm', 
+           output_type = 'pdf',
+           figure_version = figure_version) 
+```
+
+
+
+
+
+
