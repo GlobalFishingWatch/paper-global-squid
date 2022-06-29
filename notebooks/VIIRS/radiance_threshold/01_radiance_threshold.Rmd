@@ -1,0 +1,376 @@
+---
+title: "Radiance threshold"
+output: html_document
+---
+
+# Setup
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(sf)
+# Establish connection to BigQuery project
+con <- DBI::dbConnect(
+  drv = bigrquery::bigquery(),
+  project = "world-fishing-827",
+  use_legacy_sql = FALSE
+)
+options(scipen = 20)
+
+bigrquery::bq_auth(email = "masaki@globalfishingwatch.org")
+
+
+# land_sf <-
+#   rnaturalearth::ne_countries(scale = "small", returnclass = "sf")
+
+```
+
+```{r}
+query <- readr::read_file(here::here("queries", "VIIRS", "get_viirs_ais_matching_for_radiance_threhold.sql"))
+
+
+viirs_with_cloud_nightloitering_df <- DBI::dbGetQuery(con, query)
+
+
+```
+
+
+# Figure S4
+
+
+```{r}
+
+#fishwatchr::gfw_palette("chart")
+
+colors <- c("VBD matched with light-luring vessels"=fishwatchr::gfw_palette("chart")[5], 
+            "VBD matched with non-light-luring vessels"=fishwatchr::gfw_palette("chart")[7],
+            "VBD unmatched with AIS broadcasting vessels"="gray70")
+
+
+plot_df <-
+  viirs_with_cloud_nightloitering_df %>%
+  filter(date <= as.Date("2020-12-31")) %>%
+  #filter(best_flag==flag) %>%
+  #filter(match == "VIIRS_MATCHED_WITH_SQUID") %>%
+  mutate(
+    `VBD type` =
+      forcats::fct_recode(
+        match,
+        `VBD matched with light-luring vessels` = "VIIRS_MATCHED_WITH_SQUID",
+        `VBD matched with non-light-luring vessels` = "VIIRS_MATCHED_WITH_NONSQUID",
+        `VBD unmatched with AIS broadcasting vessels` = "VIIRS_UNMATCHED",
+      ),
+    `VBD type` =
+      forcats::fct_relevel(
+        `VBD type`,
+        "VBD matched with light-luring vessels",
+        "VBD matched with non-light-luring vessels",
+        "VBD unmatched with AIS broadcasting vessels"
+      ),
+    area = case_when(
+      area == "nw_indian" ~ "NW Indian",
+      area == "nw_pacific" ~ "NW Pacific",
+      area == "se_pacific" ~ "SE Pacific",
+      area == "sw_atlantic" ~ "SW Atlantic"
+    )
+  ) 
+  
+
+plot <-
+  ggplot(plot_df) +
+  geom_density(aes(Rad_DNB, y = ..density.., color = `VBD type`), position = "identity") +
+  geom_vline(xintercept = 10,
+             linetype = "dashed",
+             color = "black") +
+  scale_x_log10(
+    limits = c(0.1, 10000),
+    breaks = c(0.1, 1, 10, 100, 1000, 10000),
+    labels = c(0.1, 1, 10, 100, 1000, 10000)
+  ) +
+  ylim(0, 1) +
+  scale_color_manual(values = colors) +
+  ggtitle("Radiance distribution of VBDs") +
+  xlab("Radiance") +
+  ylab("Density") +
+  theme_bw() +
+  facet_wrap( ~ area) +
+  fishwatchr::theme_gfw() +
+  theme(legend.title = element_blank())
+
+
+ggsave(
+  here::here("outputs", "figures", "VIIRS", "Figure S4.png"),
+  plot = plot,
+  height = 10,
+  width = 20,
+  units = "cm",
+  dpi = 300
+)
+
+
+
+```
+
+# Figure S5
+
+
+```{r}
+flag <- "ALL"
+
+plot <-
+  viirs_with_cloud_nightloitering_df %>%
+  filter(date <= as.Date("2020-12-31")) %>%
+  #filter(best_flag==flag) %>%
+  filter(match == "VIIRS_MATCHED_WITH_NONSQUID") %>%
+  mutate(best_vessel_class = forcats::fct_lump_prop(best_vessel_class, prop = 0.01)) %>%
+  # group_by(best_vessel_class) %>%
+  # mutate(median_rad = median(Rad_DNB)) %>%
+  ggplot() +
+  geom_histogram(aes(Rad_DNB)) +
+  #scale_x_log10(limits=c(0.1,10000))+
+  scale_x_log10(
+    limits = c(0.1, 10000),
+    breaks = c(0.1, 1, 10, 100, 1000, 10000),
+    labels = c(0.1, 1, 10, 100, 1000, 10000)
+  ) +
+  ggtitle("Radiance distribution of VBDs that are matched with non-light-luring vessels") +
+  xlab("Radiance") +
+  ylab("Vessel count") +
+  geom_vline(xintercept = 10,
+             linetype = "dashed",
+             color = "black") +
+  facet_wrap(~ best_vessel_class) +
+  fishwatchr::theme_gfw()
+
+ggsave(
+  here::here("outputs", "figures", "VIIRS", "Figure S5.png"),
+  plot = plot,
+  height = 15,
+  width = 20,
+  units = "cm",
+  dpi = 300
+)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+colors <- c("VIIRS_MATCHED_WITH_SQUID"="red", 
+            "VIIRS_MATCHED_WITH_NONSQUID"="blue",
+            "VIIRS_UNMATCHED"="gray20")
+
+
+viirs_with_cloud_nightloitering_df %>% 
+  filter(date<=as.Date("2020-12-31")) %>% 
+  #filter(best_flag==flag) %>% 
+  #filter(match == "VIIRS_MATCHED_WITH_SQUID") %>% 
+ggplot()+
+  geom_density(aes(Rad_DNB, y = ..density.., color = match), position = "identity")+
+    scale_color_manual(values=colors)+
+  scale_x_log10(limits = c(0.1, 10000))+
+  ggtitle("ALL FLAGS")+
+  facet_wrap(~area)
+
+
+flag <- "CHN"
+viirs_with_cloud_nightloitering_df %>% 
+  filter(date<=as.Date("2020-12-31")) %>% 
+  filter(best_flag==flag) %>% 
+ggplot()+
+  geom_density(aes(Rad_DNB, y = ..density.., color = match), position = "identity")+
+    scale_color_manual(values=colors)+
+  scale_x_log10(limits = c(0.1, 10000))+
+  ggtitle(flag)+
+  facet_wrap(~area)
+
+flag <- "JPN"
+viirs_with_cloud_nightloitering_df %>% 
+  filter(date<=as.Date("2020-12-31")) %>% 
+  filter(best_flag==flag) %>% 
+ggplot()+
+  geom_density(aes(Rad_DNB, y = ..density.., color = match), position = "identity")+
+    scale_color_manual(values=colors)+
+  scale_x_log10(limits = c(0.1, 10000))+
+  ggtitle(flag)+
+  facet_wrap(~area)
+
+
+flag <- "TWN"
+viirs_with_cloud_nightloitering_df %>% 
+  filter(date<=as.Date("2020-12-31")) %>% 
+  filter(best_flag==flag) %>% 
+ggplot()+
+  geom_density(aes(Rad_DNB, y = ..density.., color = match), position = "identity")+
+    scale_color_manual(values=colors)+
+  scale_x_log10(limits = c(0.1, 10000))+
+  ggtitle(flag)+
+  facet_wrap(~area)
+
+flag <- "KOR"
+viirs_with_cloud_nightloitering_df %>% 
+  filter(date<=as.Date("2020-12-31")) %>% 
+  filter(best_flag==flag) %>% 
+ggplot()+
+  geom_density(aes(Rad_DNB, y = ..density.., color = match), position = "identity")+
+    scale_color_manual(values=colors)+
+  scale_x_log10(limits = c(0.1, 10000))+
+  ggtitle(flag)+
+  facet_wrap(~area)
+
+```
+
+
+
+
+```{r}
+viirs_with_cloud_nightloitering_df %>% 
+  filter(date<=as.Date("2020-12-31")) %>% 
+  #filter(best_flag==flag) %>% 
+  filter(match == "VIIRS_MATCHED_WITH_SQUID") %>%
+ggplot()+
+  geom_density(aes(Rad_DNB, y = ..density..), position = "identity")+
+  scale_x_log10()+
+  ggtitle("ALL FLAGS")+
+  facet_wrap(~area)
+
+
+flag <- "CHN"
+viirs_with_cloud_nightloitering_df %>% 
+  filter(date<=as.Date("2020-12-31")) %>% 
+  filter(best_flag==flag) %>% 
+    filter(match == "VIIRS_MATCHED_WITH_SQUID") %>%
+ggplot()+
+  geom_density(aes(Rad_DNB, y = ..density..), position = "identity")+
+  scale_x_log10()+
+  ggtitle(flag)+
+  facet_wrap(~area)
+
+flag <- "JPN"
+viirs_with_cloud_nightloitering_df %>% 
+  filter(date<=as.Date("2020-12-31")) %>% 
+    filter(match == "VIIRS_MATCHED_WITH_SQUID") %>%
+  filter(best_flag==flag) %>% 
+ggplot()+
+  geom_density(aes(Rad_DNB, y = ..density..), position = "identity")+
+  scale_x_log10()+
+  ggtitle(flag)+
+  facet_wrap(~area)
+
+
+flag <- "TWN"
+viirs_with_cloud_nightloitering_df %>% 
+  filter(date<=as.Date("2020-12-31")) %>% 
+  filter(best_flag==flag) %>% 
+    filter(match == "VIIRS_MATCHED_WITH_SQUID") %>%
+ggplot()+
+  geom_density(aes(Rad_DNB, y = ..density..), position = "identity")+
+  scale_x_log10()+
+  ggtitle(flag)+
+  facet_wrap(~area)
+
+flag <- "KOR"
+viirs_with_cloud_nightloitering_df %>% 
+  filter(date<=as.Date("2020-12-31")) %>% 
+  filter(best_flag==flag) %>% 
+    filter(match == "VIIRS_MATCHED_WITH_SQUID") %>%
+ggplot()+
+  geom_density(aes(Rad_DNB, y = ..density..), position = "identity")+
+  scale_x_log10()+
+  ggtitle(flag)+
+  facet_wrap(~area)
+```
+
+
+
+
+
+
+
+
+```{r}
+viirs_with_cloud_nightloitering_df %>%
+  filter(date <= as.Date("2020-12-31")) %>%
+  filter(match == "VIIRS_MATCHED_WITH_SQUID") %>%
+  pull(best_vessel_class) %>%
+  table() %>%
+  sort(decreasing = TRUE)
+
+viirs_with_cloud_nightloitering_df %>%
+  filter(date <= as.Date("2020-12-31")) %>%
+  filter(match == "VIIRS_MATCHED_WITH_SQUID") %>%
+  filter(score>0.1) %>% 
+  group_by(best_vessel_class) %>% 
+  mutate(median_rad = median(Rad_DNB)) %>% 
+  ggplot()+
+  geom_boxplot(aes(reorder(best_vessel_class, median_rad), Rad_DNB))+
+  scale_y_log10()+
+  coord_flip()
+
+```
+
+
+
+
+
+```{r}
+viirs_with_cloud_nightloitering_df %>%
+  filter(date <= as.Date("2020-12-31")) %>%
+  filter(match == "VIIRS_MATCHED_WITH_NONSQUID") %>%
+    mutate(best_vessel_class = forcats::fct_lump_prop(best_vessel_class, prop = 0.01)) %>% 
+  pull(best_vessel_class) %>%
+  table() %>%
+  sort(decreasing = TRUE)
+
+
+viirs_with_cloud_nightloitering_df %>%
+  filter(date <= as.Date("2020-12-31")) %>%
+  filter(match == "VIIRS_MATCHED_WITH_NONSQUID") %>%
+    mutate(best_vessel_class = forcats::fct_lump_prop(best_vessel_class, prop = 0.01)) %>% 
+  group_by(best_vessel_class) %>% 
+  mutate(median_rad = median(Rad_DNB)) %>% 
+  ggplot()+
+  geom_boxplot(aes(reorder(best_vessel_class, median_rad), Rad_DNB))+
+  scale_y_log10()+
+  coord_flip()
+```
+
+
+
+
+
+
+
+
+

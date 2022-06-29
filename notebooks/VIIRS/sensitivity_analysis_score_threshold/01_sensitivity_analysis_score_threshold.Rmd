@@ -1,0 +1,369 @@
+---
+title: "Sensitivity analsis for matching score threshold"
+output: html_document
+---
+
+# Setup
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Establish connection to BigQuery project
+con <- DBI::dbConnect(
+  drv = bigrquery::bigquery(),
+  project = "world-fishing-827",
+  use_legacy_sql = FALSE
+)
+options(scipen = 20)
+
+bigrquery::bq_auth(email = "masaki@globalfishingwatch.org")
+
+round1000 <- function(x){
+  round(x*(10^-6),3)*10^6
+}
+
+
+round0.1 <- function(x){
+  round(x*10)/10
+}
+
+
+```
+
+
+
+# define processing function
+
+```{r}
+
+processData <- function(SCORE_THRESHOLD){
+  
+  # radiance threshold to extract VIIRS detection
+  RAD_THRESHOLD <- 10
+  # Squid vessels that did night loitering for more than NL_HOUR_THRESHOLD hours in a day are extracted as NL vessels
+  NL_HOUR_THRESHOLD <- 1
+
+  # matching score threshold
+  #SCORE_THRESHOLD <- 0.01
+
+  query <- glue::glue(readr::read_file(here::here("queries", "VIIRS", "get_viirs_ais_counts_for_sensitivity_analysis.sql")))
+  
+  
+  
+  viirs_ais_counts_orig_df <-
+    DBI::dbGetQuery(con, query) %>%
+    mutate(
+      score_threshold = SCORE_THRESHOLD,
+      nl_threshold = NL_HOUR_THRESHOLD,
+      rad_threshold = RAD_THRESHOLD
+      
+    )
+  
+  
+  # eliminate anomaly date
+  viirs_ais_counts_df <-
+    viirs_ais_counts_orig_df %>%
+    rename(year_month0.5 = year_half_month) %>%
+    filter(!(area == "se_pacific" & date == as.Date("2017-04-07"))) 
+
+#########################
+# Extract AIS/VIIRS on the date where maximum VIIRS are observed for each 15 days
+suppressWarnings(
+  viirs_ais_on_15days_max_df <-
+    viirs_ais_counts_df %>%
+    group_by(year_month0.5, area) %>%
+    mutate(max_count_half_month = max(count_viirs_total, na.rm = TRUE)) %>%
+    filter(count_viirs_total == max_count_half_month) %>%
+    arrange(area, date) %>%
+    mutate(rownum = row_number()) %>%
+    filter(rownum == 1)
+)
+
+
+
+# Change column name and select only necessary columns
+viirs_ais_half_month_df <-
+  viirs_ais_on_15days_max_df %>%
+  rename(
+    count_viirs_total_half_month = count_viirs_total,
+    count_viirs_matched_half_month = count_viirs_matched,
+    # count night loitering vessels
+    count_nl_half_month = count_nl,
+    count_nl_matched_half_month = count_nl_matched,
+  ) %>%
+  select(
+    area,
+    year_month0.5,
+    count_viirs_total_half_month,
+    count_viirs_matched_half_month,
+    count_nl_half_month,
+    count_nl_matched_half_month,
+  ) %>%
+  arrange(area, year_month0.5)
+
+# Join 15-day max count to every day count
+viirs_ais_counts_daily_month0.5_df <-
+  viirs_ais_counts_df %>%
+  left_join(viirs_ais_half_month_df, by = c("area", "year_month0.5"))
+
+
+
+# # ######################
+# detection_rate_by_month3_df <-
+#   viirs_ais_on_15days_max_df %>%
+#   group_by(year_month3, area) %>%
+#   summarise(
+#     count_viirs_total_month3 = sum(count_viirs_total, na.rm = TRUE),
+#     count_viirs_matched_month3 = sum(count_viirs_matched, na.rm = TRUE),
+#     count_nl_month3 = sum(count_nl, na.rm = TRUE),
+#     count_nl_matched_month3 = sum(count_nl_matched, na.rm = TRUE),
+#     .groups = "drop"
+#   ) %>%
+#   mutate(detection_rate_by_month3 = count_nl_matched_month3 / count_nl_month3) %>%
+#   select(year_month3,
+#          area,
+#          detection_rate_by_month3,) %>%
+#   arrange(area, year_month3)
+# 
+# 
+# 
+# # ######################
+# detection_rate_by_month4_df <-
+#   viirs_ais_on_15days_max_df %>%
+#   group_by(year_month4, area) %>%
+#   summarise(
+#     count_viirs_total_month4 = sum(count_viirs_total, na.rm = TRUE),
+#     count_viirs_matched_month4 = sum(count_viirs_matched, na.rm = TRUE),
+#     count_nl_month4 = sum(count_nl, na.rm = TRUE),
+#     count_nl_matched_month4 = sum(count_nl_matched, na.rm = TRUE),
+#     .groups = "drop"
+#   ) %>%
+#   mutate(detection_rate_by_month4 = count_nl_matched_month4 / count_nl_month4) %>%
+#   select(year_month4,
+#          area,
+#          detection_rate_by_month4) %>%
+#   arrange(area, year_month4)
+# 
+# 
+# #######################
+# 
+# detection_rate_by_month6_df <-
+#   viirs_ais_on_15days_max_df %>%
+#   group_by(year_month6, area) %>%
+#   summarise(
+#     count_viirs_total_month6 = sum(count_viirs_total, na.rm = TRUE),
+#     count_viirs_matched_month6 = sum(count_viirs_matched, na.rm = TRUE),
+#     count_nl_month6 = sum(count_nl, na.rm = TRUE),
+#     count_nl_matched_month6 = sum(count_nl_matched, na.rm = TRUE),
+#     .groups = "drop"
+#   ) %>%
+#   mutate(detection_rate_by_month6 = count_nl_matched_month6 / count_nl_month6) %>%
+#   select(year_month6,
+#          area,
+#          detection_rate_by_month6) %>%
+#   arrange(area, year_month6)
+
+
+
+# Join daily AIS/VIIRS and 
+# viirs_ais_counts_daily_month0.5_with_detection_rates_df <-
+#   viirs_ais_counts_daily_month0.5_df %>%
+#   left_join(detection_rate_by_month3_df,
+#             by = c("year_month3", "area")) %>%
+#   left_join(detection_rate_by_month4_df,
+#             by = c("year_month4", "area")) %>%
+#   left_join(detection_rate_by_month6_df,
+#             by = c("year_month6", "area"))
+
+
+viirs_ais_counts_daily_month0.5_with_detection_rates_df <-
+  viirs_ais_counts_daily_month0.5_df
+
+
+
+#########################
+# calculate dark vessels
+
+viirs_ais_dark_df <-
+  viirs_ais_counts_daily_month0.5_with_detection_rates_df
+
+# viirs_ais_dark_df <-
+#   viirs_ais_counts_daily_month0.5_with_detection_rates_df %>%
+#   # estimate the total number of vessels by using 6month detection rate of night loiterring vessels
+#   mutate(
+#     estimated_total_vessels_month3 = count_viirs_total_half_month / detection_rate_by_month3,
+#     estimated_total_vessels_month4 = count_viirs_total_half_month / detection_rate_by_month4,
+#     estimated_total_vessels_month6 = count_viirs_total_half_month / detection_rate_by_month6
+#   )  %>%
+#   # add average number of night loitering AIS vessels
+#   # for each 15 days
+#   group_by(area, year_month0.5) %>%
+#   mutate(count_nl_half_month_mean = mean(count_nl, na.rm = TRUE)) %>%
+#   ungroup()
+
+
+result_df <- 
+viirs_ais_dark_df %>% 
+  group_by(area,
+           score_threshold,
+           nl_threshold,
+           rad_threshold
+           ) %>% 
+  summarise(
+    count_viirs_total = sum(count_viirs_total, na.rm = TRUE),
+    count_viirs_matched = sum(count_viirs_matched, na.rm = TRUE),
+    count_nl = sum(count_nl, na.rm = TRUE),
+    count_nl_matched = sum(count_nl_matched, na.rm = TRUE),
+    count_viirs_total_half_month = sum(count_viirs_total_half_month, na.rm = TRUE),
+    count_viirs_matched_half_month = sum(count_viirs_matched_half_month, na.rm = TRUE),
+    count_nl_half_month = sum(count_nl_half_month, na.rm = TRUE),
+    count_nl_matched_half_month = sum(count_nl_matched_half_month, na.rm = TRUE),
+    # estimated_total_vessels_month3 = sum(estimated_total_vessels_month3, na.rm = TRUE),
+    # estimated_total_vessels_month4 = sum(estimated_total_vessels_month4, na.rm = TRUE),
+    # estimated_total_vessels_month6 = sum(estimated_total_vessels_month6, na.rm = TRUE)
+    .groups = "drop"
+  )
+
+
+  return(result_df)
+}
+
+
+
+
+```
+
+
+# get data for variety of score thresholds
+
+```{r}
+scores <- 10^c(-3, -2.75, -2.50, -2.25, -2, -1.75, -1.50, -1.25, -1)
+result_all_df <- 
+  purrr::map_dfr(scores, processData)
+```
+
+
+
+
+# Plot sensitivity analysis
+
+```{r}
+
+plot_df <- 
+result_all_df %>% 
+  ungroup() %>% 
+  mutate(
+    `Detected by both VIIRS and AIS` = count_nl_matched_half_month,
+    `Detected only by VIIRS` = count_viirs_total_half_month - count_nl_matched_half_month,
+  ) 
+
+
+pllot01_df <-
+  plot_df %>%
+  select(score_threshold,
+         area,
+         `Detected by both VIIRS and AIS`,
+         `Detected only by VIIRS`) %>%
+  tidyr::pivot_longer(
+    cols = c(`Detected by both VIIRS and AIS`, `Detected only by VIIRS`),
+    names_to = "Detection type",
+    values_to = "Vessel count"
+  ) %>%
+  group_by(score_threshold, area) %>%
+  mutate(percentage = 100 * `Vessel count` / sum(`Vessel count`)) %>% 
+  mutate(percentage_display = if_else(`Detection type` == "Detected only by VIIRS", paste0(round(percentage),"%"), "")) 
+
+
+  
+pllot02_df <- 
+  pllot01_df %>% 
+  group_by(score_threshold, `Detection type`) %>% 
+  summarise(
+    `Vessel count` = sum(`Vessel count`),
+    .groups = "drop"
+  ) %>% 
+  group_by(score_threshold) %>% 
+  mutate(total = sum(`Vessel count`),
+         percentage = 100 * `Vessel count` / total,
+         percentage_display = if_else(`Detection type` == "Detected only by VIIRS", paste0(round(percentage),"%"), ""))
+         
+  
+  
+
+
+p1 <-
+  pllot01_df %>%
+  mutate(
+    area = case_when(
+      area == "nw_indian" ~ "NW Indian",
+      area == "nw_pacific" ~ "NW Pacific",
+      area == "se_pacific" ~ "SE Pacific",
+      area == "sw_atlantic" ~ "SW Atlantic"
+    )
+  ) %>% 
+  ggplot() +
+  geom_bar(aes(score_threshold, `Vessel count`, fill = `Detection type`), stat = "identity") +
+  geom_text(aes(score_threshold, `Vessel count` * 0.5, label = percentage_display),
+            size = 2) +
+  scale_x_log10() +
+  facet_wrap( ~ area) +
+  scale_fill_manual(
+    values = c(
+      "Detected only by VIIRS" = fishwatchr::gfw_palette("chart")[6],
+      "Detected by both VIIRS and AIS" = fishwatchr::gfw_palette("chart")[1]
+    )
+  ) +
+    ylab("Vessel days") +
+  xlab("Score threshold") +
+  ggtitle("Regional")+
+  fishwatchr::theme_gfw()
+
+
+    
+p2 <-
+  pllot02_df %>%
+  
+  ggplot() +
+  geom_bar(aes(score_threshold, `Vessel count`, fill = `Detection type`), stat = "identity") +
+  geom_text(aes(score_threshold, `Vessel count` * 0.5, label = percentage_display),
+            size = 2) +
+  scale_x_log10() +
+  #facet_wrap(~area)+
+  scale_fill_manual(
+    values = c(
+      "Detected only by VIIRS" = fishwatchr::gfw_palette("chart")[6],
+      "Detected by both VIIRS and AIS" = fishwatchr::gfw_palette("chart")[1]
+    )
+  ) +
+  ylab("Vessel days") +
+  xlab("Score threshold") +
+  ggtitle("Global")+
+  fishwatchr::theme_gfw()
+  
+  library(patchwork)
+  plot <-
+  p2 + p1 +
+  plot_annotation(title = "Sensitivity analysis for VIIRS-AIS matching score threshold",
+                  subtitle = "Vessel counts aggregated for all year (2017~2021)",
+                  tag_levels = "A") +
+  plot_layout(guides = "collect") &
+  theme(legend.position = 'bottom') 
+
+
+
+  
+  ggsave(here::here("outputs", "figures", "VIIRS", "Sentisivity analysis for matching score threshold.png"), 
+         plot=plot,
+         width = 25, height = 15, units = "cm", dpi = 300)
+  
+  
+```
+
+
+
+
+
+
+
+

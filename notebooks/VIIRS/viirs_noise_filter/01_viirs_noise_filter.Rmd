@@ -1,0 +1,746 @@
+---
+title: "Develop VIIRS noise filter"
+output: github_document
+---
+
+# Setup
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Establish connection to BigQuery project
+con <- DBI::dbConnect(
+  drv = bigrquery::bigquery(),
+  project = "world-fishing-827",
+  use_legacy_sql = FALSE
+)
+#options(scipen = 20)
+
+bigrquery::bq_auth(email = "masaki@globalfishingwatch.org")
+
+land_sf <-
+  rnaturalearth::ne_countries(scale = "large", returnclass = "sf")
+
+
+```
+
+
+
+# Get study area
+
+```{r}
+query <- 
+  
+"
+-- Squid Fishing area
+SELECT
+    *
+FROM 
+    `world-fishing-827.fra_collaboration.squid_region_aois_v20211016`
+"
+
+squid_area_df <- DBI::dbGetQuery(con, query)
+
+squid_area_sf <- 
+  sf::st_as_sf(squid_area_df, wkt = "geometry", crs=4326) %>% 
+  sf::st_wrap_dateline(  )
+```
+
+
+
+
+
+
+
+# ------
+
+# GET : viirs
+
+```{r eval=FALSE}
+query <- readr::read_file(here::here("queries", "VIIRS", "get_viirs_original.sql"))
+
+viirs_orig_df <- DBI::dbGetQuery(con, query)
+
+saveRDS(viirs_orig_df, "viirs_orig_df_v20220222.rds")
+```
+
+```{r}
+viirs_df <- readRDS("viirs_orig_df_v20220222.rds")
+```
+
+
+
+
+
+# ------
+
+
+# DEFINE : Ellipse function
+
+```{r}
+# This function return TRUE if (lon,lat) is located inside of ellipse defined by (center_lon, center_lat, radius_lon, radius_lat)
+isInEllipse <-
+  function(lon, lat,
+           center_lon, center_lat,
+           radius_lon, radius_lat) {
+    return(((lon - center_lon) / radius_lon) ^ 2 + ((lat - center_lat) / radius_lat) ^ 2 < 1)
+  }
+
+
+
+
+genrateEllipse <- function(center_lon,
+                           center_lat,
+                           radius_lon,
+                           radius_lat
+){
+
+t <- seq(0, 2*pi, 0.05) 
+x <- center_lon + radius_lon*cos(t)
+y <- center_lat + radius_lat*sin(t)
+#plot(x,y,pch=19, col='blue')
+  
+ df <- data.frame(x,y) 
+
+ return(df)
+}
+```
+
+
+# DEFINE PLOTTING FUNCTION
+
+
+```{r}
+
+plotSupplementaryFigure <-
+  function(qf_df, inside_df, ellipse_df, filename, title) {
+    color <- "white"
+    
+    # VBD colors
+    vbd_colors <-
+      c(
+        "VESSEL (GLOBAL)" = fishwatchr::gfw_palette("diverging", 7)[4],
+        "VESSEL (SOUTH AMERICA)" = fishwatchr::gfw_palette("diverging", 7)[2],
+        "NOISE" = fishwatchr::gfw_palette("diverging", 7)[7]
+      )
+
+    
+    
+    dummy_df <- qf_df[1:3,]
+    
+    dummy_df[1, "Lat_DNB"] <- 0
+    dummy_df[1, "Lon_DNB"] <- 20
+    dummy_df[1, "filter"] <- "VESSEL (GLOBAL)"
+    dummy_df[1, "filter2"] <- "VESSEL"
+    dummy_df[1, "Rad_DNB"] <- NA
+    dummy_df[1, "SHI"] <- NA
+    
+    dummy_df[2, "Lat_DNB"] <- 0
+    dummy_df[2, "Lon_DNB"] <- 20
+    dummy_df[2, "filter"] <- "VESSEL (SOUTH AMERICA)"
+    dummy_df[2, "filter2"] <- "VESSEL"
+    dummy_df[2, "Rad_DNB"] <- NA
+    dummy_df[2, "SHI"] <- NA
+    
+    dummy_df[3, "Lat_DNB"] <- 0
+    dummy_df[3, "Lon_DNB"] <- 20
+    dummy_df[3, "filter"] <- "NOISE"
+    dummy_df[3, "filter2"] <- "NOISE"
+    dummy_df[3, "Rad_DNB"] <- NA
+    dummy_df[3, "SHI"] <- NA
+    
+    qf_df <-
+      bind_rows(qf_df, dummy_df)
+    
+    # plot Rad x SHI
+    
+    p1 <-
+      inside_df %>%
+      ggplot() +
+      geom_point(
+        aes(Rad_DNB, SHI, color = filter),
+        size = 0.2,
+        alpha = 0.2,
+        shape = 16
+      ) +
+      scale_x_continuous(trans = "log10",
+                         breaks = c(0.1, 1, 10, 100, 1000, 10000, 100000),
+                         labels = c(0.1, 1, 10, 100, 1000, 10000, 100000),
+                         
+                         ) +
+      scale_y_continuous(trans = "log10") +
+      scale_color_manual(values = vbd_colors,
+                         guide = guide_legend(override.aes = list(size = 5, alpha = 1))) +
+      xlab("Radiance") +
+      ggtitle("A") +
+      fishwatchr::theme_gfw() +
+      guides(colour = FALSE) +
+      
+      theme(
+        plot.background = element_rect(colour = "white", fill = "white"),
+        panel.background = element_rect(colour = "white", fill = "white")
+      )
+    
+    
+    
+    
+    
+    
+    # plot Map
+    p2 <-
+      #filter(filter != "OUT") %>%
+      ggplot() +
+      
+      #fishwatchr::geom_gfw_land()+
+      
+      # squid fishing area
+      geom_sf(
+        data = squid_area_sf,
+        #fill = fishwatchr::gfw_palette("yellow", 4, "discrete")[4],
+        fill = fishwatchr::gfw_palette("yellow")[5],
+        color = "gray",
+        
+        alpha = 1,
+        size = 0.1
+      ) +
+      # ggnewscale::new_scale("fill")+
+      # ggnewscale::new_scale("color")+
+      
+      
+      # ellipse
+      geom_path(data = ellipse_df,
+                aes(x, y),
+                size = 0.5,
+                color = "gray") +
+      ggnewscale::new_scale("color") +
+      
+      
+      # land
+      geom_sf(
+        data = land_sf,
+        fill = fishwatchr::gfw_palettes$map_country_light[1],
+        color = fishwatchr::gfw_palettes$map_country_light[2],
+        size = 0.1
+      ) +
+      
+      
+      # VBD
+      geom_point(
+        data = qf_df,
+        aes(Lon_DNB, Lat_DNB, color = filter),
+        size = 0.1,
+        alpha = 0.05,
+        shape = 16
+      ) +
+      
+      scale_color_manual(values = vbd_colors,
+                         guide = guide_legend(override.aes = list(size = 5, alpha = 1))) +
+      
+      labs(color = "VIIRS detections") +
+      ggnewscale::new_scale("color") +
+      
+      # scale_x_continuous(breaks = seq(-180, 180, 20), limits = c(-130, 20)) +
+      # scale_y_continuous(breaks = seq(-90, 90, 10), limits = c(-60, 30)) +
+      
+      scale_x_continuous(limits = c(-130, 20)) +
+      scale_y_continuous(limits = c(-60, 30)) +
+      
+      
+      
+      facet_grid(filter2 ~ .) +
+      xlab("Longitude") +
+      ylab("Latitude") +
+      
+      
+      ggtitle("B") +
+      
+      fishwatchr::theme_gfw_map(theme = "light") +
+      theme(legend.position = "bottom")
+    
+    
+    
+    
+    
+    
+    library(patchwork)
+    plot <-
+      p1 + p2 +
+      plot_annotation(title = title) +
+      plot_layout(guides = "collect") &
+      theme(legend.position = 'bottom') 
+
+    
+    
+    
+    ggsave(
+      filename = filename,
+      plot = plot,
+      path = NULL,
+      width = 20,
+      height = 10,
+      units = "cm",
+      dpi = 300
+    )
+    
+    plot(plot)
+  }
+```
+
+
+# ------
+
+# QF1 & QF2
+
+
+```{r}
+qf <- 1
+
+# Small Ellipse for QF1
+X <- -50
+Y <- -22
+RX <- 50
+RY <- 20
+
+
+qf_df_1 <-
+  viirs_df %>%
+  filter(QF_Detect %in% qf) %>%
+  filter(Rad_DNB>10) %>% 
+  mutate(
+    QF = factor(QF_Detect),
+    # inside/outside of elliplse
+    circle = ifelse(isInEllipse(Lon_DNB, Lat_DNB, X, Y, RX, RY), "IN", "OUT"),
+    # noise filter
+    filter = case_when(
+      circle == "OUT" ~ "VESSEL (GLOBAL)",
+      between(Rad_DNB, 2500, 100000) & SHI < 0.990 ~ "VESSEL (SOUTH AMERICA)",
+      between(Rad_DNB, 1500, 2500) &  SHI < 1 ~ "VESSEL (SOUTH AMERICA)",
+      between(Rad_DNB, 400, 1500) & SHI < 0.995 ~ "VESSEL (SOUTH AMERICA)",
+      between(Rad_DNB, 200, 400) & SHI < 0.975 ~ "VESSEL (SOUTH AMERICA)",
+      between(Rad_DNB, 130, 200) & SHI < 0.920 ~ "VESSEL (SOUTH AMERICA)",
+      between(Rad_DNB, 100, 130) & SHI < 0.8 ~ "VESSEL (SOUTH AMERICA)",
+      TRUE ~ "NOISE"
+    ),
+    
+    filter2 = case_when(
+      circle == "OUT" ~ "VESSEL",
+      between(Rad_DNB, 2500, 100000) & SHI < 0.990 ~ "VESSEL",
+      between(Rad_DNB, 1500, 2500) &  SHI < 1 ~ "VESSEL",
+      between(Rad_DNB, 400, 1500) & SHI < 0.995 ~ "VESSEL",
+      between(Rad_DNB, 200, 400) & SHI < 0.975 ~ "VESSEL",
+      between(Rad_DNB, 130, 200) & SHI < 0.920 ~ "VESSEL",
+      between(Rad_DNB, 100, 130) & SHI < 0.8 ~ "VESSEL",
+      TRUE ~ "NOISE"
+    )
+  ) %>% 
+  mutate( filter2 = factor(filter2, levels = c("VESSEL", "NOISE")))%>% 
+  mutate(filter = factor(filter, levels = c("VESSEL (GLOBAL)", "VESSEL (SOUTH AMERICA)", "NOISE")))
+
+
+inside_df_1 <- 
+  qf_df_1 %>%
+  filter(circle == "IN")
+
+
+outside_df_1 <- 
+  qf_df_1 %>%
+  filter(circle == "OUT")
+
+
+
+qf <- 2
+
+# Small Ellipse for QF1
+X <- -50
+Y <- -22
+RX <- 50
+RY <- 20
+
+qf_df_2 <-
+  viirs_df %>%
+  filter(QF_Detect %in% qf) %>%
+  filter(Rad_DNB>10) %>% 
+  mutate(
+    QF = factor(QF_Detect),
+    # inside/outside of elliplse
+    circle = ifelse(isInEllipse(Lon_DNB, Lat_DNB, X, Y, RX, RY), "IN", "OUT"),
+    # noise filter
+    filter = case_when(
+      circle == "OUT" ~ "VESSEL (GLOBAL)",
+      between(Rad_DNB, 100, 100000) & SHI < 1 ~ "VESSEL (SOUTH AMERICA)",
+      between(Rad_DNB, 50, 100) &  SHI < 0.65 ~ "VESSEL (SOUTH AMERICA)",
+      between(Rad_DNB, 10, 50) & SHI < 0.4 ~ "VESSEL (SOUTH AMERICA)",
+      TRUE ~ "NOISE"
+    ),
+    
+    filter2 = case_when(
+      circle == "OUT" ~ "VESSEL",
+      between(Rad_DNB, 100, 100000) & SHI < 1 ~ "VESSEL",
+      between(Rad_DNB, 50, 100) &  SHI < 0.65 ~ "VESSEL",
+      between(Rad_DNB, 10, 50) & SHI < 0.4 ~ "VESSEL",
+      TRUE ~ "NOISE"
+    )
+  ) %>%
+  mutate(filter2 = factor(filter2, levels = c("VESSEL", "NOISE"))) %>%
+  mutate(filter = factor(filter, levels = c("VESSEL (GLOBAL)", "VESSEL (SOUTH AMERICA)", "NOISE")
+  ))
+
+
+inside_df_2 <- 
+  qf_df_2 %>%
+  filter(circle == "IN")
+
+
+outside_df_2 <- 
+  qf_df_2 %>%
+  filter(circle == "OUT")
+
+
+qf_df <- 
+  bind_rows(qf_df_1,qf_df_2)
+
+inside_df <- 
+  bind_rows(inside_df_1,inside_df_2)
+
+outside_df <- 
+  bind_rows(outside_df_1,outside_df_2)
+
+
+# Ellipse
+ellipse_df <- genrateEllipse(X,Y,RX,RY)
+
+plotSupplementaryFigure(
+  qf_df,
+  inside_df,
+  ellipse_df,
+  here::here("outputs", "figures", "VIIRS", "VIIRS noise filter QF1-2.png"),
+  "VIIRS SAA noise filter for QF1 & QF2")
+
+```
+
+
+
+
+
+
+
+# ------
+
+# QF3
+
+- OUTSIDE THE SMALL ELLIPSE
+  - All the QF3 are regarded as VESSEL
+- INSIDE THE SMALL ELLIPSE
+  - All the QF3 are regarded as NOISE
+  
+
+```{r}
+qf <- 3
+
+# Large Ellipse
+X <- -50
+Y <- -17
+RX <- 75
+RY <- 35
+
+
+
+
+qf_df_3 <-
+  viirs_df %>%
+  filter(QF_Detect %in% qf) %>%
+  filter(Rad_DNB>10) %>% 
+  mutate(
+    QF = factor(QF_Detect),
+    # inside/outside of elliplse
+    circle = ifelse(isInEllipse(Lon_DNB, Lat_DNB, X, Y, RX, RY), "IN", "OUT"),
+    
+    
+    # noise filter
+    # all the QF3 around south america is noise
+    filter = if_else(circle == "IN", "NOISE", "VESSEL (GLOBAL)"),
+    
+    filter2 = if_else(circle == "IN", "NOISE", "VESSEL")
+  ) %>% 
+  mutate( filter2 = factor(filter2, levels = c("VESSEL", "NOISE")))%>% 
+  mutate(filter = factor(filter, levels = c("VESSEL (GLOBAL)", "VESSEL (SOUTH AMERICA)", "NOISE")))
+
+
+inside_df_3 <- 
+  qf_df_3 %>%
+  filter(circle == "IN")
+
+
+outside_df_3 <- 
+  qf_df_3 %>%
+  filter(circle == "OUT")
+
+
+
+# Ellipse
+ellipse_df <- genrateEllipse(X,Y,RX,RY)
+
+
+plotSupplementaryFigure(
+  qf_df_3,
+  inside_df_3,
+  ellipse_df,
+  here::here("outputs", "figures", "VIIRS", "VIIRS noise filter QF3.png"),
+  "VIIRS SAA noise filter for QF3")
+
+
+# plotSupplementaryFigure(qf_df_3, inside_df_3, ellipse_df, "Figure_S2_QF3.png", "VIIRS SAA noise filter for QF3")
+```
+
+
+
+
+
+
+
+
+# QF5
+
+
+```{r}
+qf <- 5
+
+# Large Ellipse
+X <- -50
+Y <- -17
+RX <- 75
+RY <- 35
+
+# Ellipse
+ellipse_df <- genrateEllipse(X,Y,RX,RY)
+
+
+slope <- 0.8
+intercept <- -0.4
+
+
+qf_df_5 <-
+  viirs_df %>%
+  filter(QF_Detect %in% qf) %>%
+  filter(Rad_DNB>10) %>% 
+  mutate(
+    QF = factor(QF_Detect),
+    # inside/outside of elliplse
+    circle = ifelse(isInEllipse(Lon_DNB, Lat_DNB, X, Y, RX, RY), "IN", "OUT"),
+    
+    # noise filter
+    filter = case_when(
+      circle == "OUT" ~ "NOISE",
+      ((Rad_DNB < 300) & (SHI < 0.3)) ~ "VESSEL (SOUTH AMERICA)",
+      ((Rad_DNB < 300) & (SHI < slope * log10(Rad_DNB) + intercept)) ~ "VESSEL (SOUTH AMERICA)",
+      ((Rad_DNB < 300) & (SHI >= slope * log10(Rad_DNB) + intercept) & (Rad_DNB > 15)) ~ "VESSEL (SOUTH AMERICA)",
+      TRUE ~ "NOISE"
+    ),
+    
+    filter2 = case_when(
+      circle == "OUT" ~ "NOISE",
+      ((Rad_DNB < 300) & (SHI < 0.3)) ~ "VESSEL",
+      ((Rad_DNB < 300) & (SHI < slope * log10(Rad_DNB) + intercept)) ~ "VESSEL",
+      ((Rad_DNB < 300) & (SHI >= slope * log10(Rad_DNB) + intercept) & (Rad_DNB > 15)) ~ "VESSEL",
+      TRUE ~ "NOISE"
+    ),
+    
+  ) %>% 
+  mutate(filter2 = factor(filter2, levels = c("VESSEL", "NOISE")))%>% 
+  mutate(filter = factor(filter, levels = c("VESSEL (GLOBAL)", "VESSEL (SOUTH AMERICA)", "NOISE")))
+
+
+inside_df_5 <- 
+  qf_df_5 %>%
+  filter(circle == "IN")
+
+
+outside_df_5 <- 
+  qf_df_5 %>%
+  filter(circle == "OUT")
+
+
+
+plotSupplementaryFigure(
+  qf_df_5,
+  inside_df_5,
+  ellipse_df,
+  here::here("outputs", "figures", "VIIRS", "VIIRS noise filter QF5.png"),
+  "VIIRS SAA noise filter for QF5")
+
+
+# plotSupplementaryFigure(qf_df_5, inside_df_5, ellipse_df, "Figure_S3_QF5.png", "VIIRS SAA noise filter for QF5")
+```
+
+
+
+
+
+# QF7
+
+
+```{r}
+qf <- 7
+
+# Large Ellipse
+X <- -50
+Y <- -17
+RX <- 75
+RY <- 35
+
+# Ellipse
+ellipse_df <- genrateEllipse(X,Y,RX,RY)
+
+
+
+
+
+qf_df_7 <-
+  viirs_df %>%
+  filter(QF_Detect %in% qf) %>%
+  filter(Rad_DNB>10) %>% 
+  mutate(
+    QF = factor(QF_Detect),
+    # inside/outside of elliplse
+    circle = ifelse(isInEllipse(Lon_DNB, Lat_DNB, X, Y, RX, RY), "IN", "OUT"),
+    
+    # noise filter
+    filter = case_when(
+      circle == "OUT" ~ "NOISE",
+      TRUE ~ "VESSEL (SOUTH AMERICA)"
+    ),
+    
+    filter2 = case_when(
+      circle == "OUT" ~ "NOISE",
+      TRUE ~ "VESSEL"
+    ),
+    
+
+    
+
+    
+    
+    
+  ) %>% 
+  mutate(filter2 = factor(filter2, levels = c("VESSEL", "NOISE")))%>% 
+  mutate(filter = factor(filter, levels = c("VESSEL (GLOBAL)", "VESSEL (SOUTH AMERICA)", "NOISE")))
+
+
+inside_df_7 <- 
+  qf_df_7 %>%
+  filter(circle == "IN")
+
+
+outside_df_7 <- 
+  qf_df_7 %>%
+  filter(circle == "OUT")
+
+
+
+plotSupplementaryFigure(
+  qf_df_7,
+  inside_df_7,
+  ellipse_df,
+  here::here("outputs", "figures", "VIIRS", "VIIRS noise filter QF7.png"),
+  "VIIRS SAA noise filter for QF7")
+
+
+# plotSupplementaryFigure(qf_df_7, inside_df_7, ellipse_df, "Figure_S4_QF7.png", "VIIRS SAA noise filter for QF7")
+```
+
+
+
+
+
+
+
+# QF10
+
+
+```{r}
+qf <- 10
+
+# Large Ellipse
+X <- -50
+Y <- -17
+RX <- 75
+RY <- 35
+
+# Ellipse
+ellipse_df <- genrateEllipse(X,Y,RX,RY)
+
+
+
+
+
+qf_df_10 <-
+  viirs_df %>%
+  filter(QF_Detect %in% qf) %>%
+  filter(Rad_DNB>10) %>% 
+  mutate(
+    QF = factor(QF_Detect),
+    # inside/outside of elliplse
+    circle = ifelse(isInEllipse(Lon_DNB, Lat_DNB, X, Y, RX, RY), "IN", "OUT"),
+    
+    # noise filter
+    filter = "VESSEL (GLOBAL)",
+    
+    filter2 = "VESSEL",
+    
+
+        # noise filter
+    filter = case_when(
+      circle == "OUT" ~ "VESSEL (GLOBAL)",
+      TRUE ~ "VESSEL (SOUTH AMERICA)"
+    ),
+    
+    filter2 = case_when(
+      circle == "OUT" ~ "VESSEL",
+      TRUE ~ "VESSEL"
+    ),
+    
+    
+
+    
+    
+    
+  ) %>% 
+  mutate(filter2 = factor(filter2, levels = c("VESSEL", "NOISE")))%>% 
+  mutate(filter = factor(filter, levels = c("VESSEL (GLOBAL)", "VESSEL (SOUTH AMERICA)", "NOISE")))
+
+
+inside_df_10 <-
+  qf_df_10 %>%
+  filter(circle == "IN")
+
+
+outside_df_10 <-
+  qf_df_10 %>%
+  filter(circle == "OUT")
+
+
+
+
+plotSupplementaryFigure(
+  qf_df_10,
+  inside_df_10,
+  ellipse_df,
+  here::here("outputs", "figures", "VIIRS", "VIIRS noise filter QF10.png"),
+  "VIIRS SAA noise filter for QF10")
+
+
+# plotSupplementaryFigure(qf_df_10, inside_df_10, ellipse_df, "Figure_S5_QF10.png", "VIIRS SAA noise filter for QF10")
+```
+
+
+
+
+
+
+
+
+
+
+
+
