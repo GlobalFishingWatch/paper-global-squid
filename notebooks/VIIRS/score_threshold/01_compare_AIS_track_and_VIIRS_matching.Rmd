@@ -9,6 +9,7 @@ output: html_document
 library(ggplot2)
 library(dplyr)
 library(sf)
+
 # Establish connection to BigQuery project
 con <- DBI::dbConnect(
   drv = bigrquery::bigquery(),
@@ -19,12 +20,9 @@ options(scipen = 20)
 
 bigrquery::bq_auth(email = "masaki@globalfishingwatch.org")
 
-
-land_sf <-
-  rnaturalearth::ne_countries(scale = "large", returnclass = "sf") %>% 
-  sf::st_make_valid()
-
-
+# land_sf <-
+#   rnaturalearth::ne_countries(scale = "large", returnclass = "sf") %>% 
+#   sf::st_make_valid()
 ```
 
 
@@ -34,11 +32,16 @@ land_sf <-
 
 # Define function
 
+These function are used to get and plot AIS tracks and VIIRS detections simultaneously for evaluate matching score threshold.
+
 
 ```{r}
 get_and_plot_ais_viirs <-
   function(YYYY_MM_DD, lat, lon, r, hours = 5) {
-    
+    # YYYY_MM_DD: date
+    # lat, lon: center position
+    # r: VIIRS and AIS data is extracted from the range between (lat-r, lat+r) and  (lon-r, lon+r)
+    # hours: AIS data is extracted from the plus/minus this hours from VIIRS detecitons
     
     ####################################
     # bbox of data
