@@ -583,7 +583,7 @@ ggplot(yearly_area_long_df) +
   geom_text(aes(x = year, y = `Vessel count` * 0.5, label = percentage_display),
             size = 2) +
   fishwatchr::theme_gfw() +
-  facet_wrap(area ~ .) +
+  facet_wrap(area ~ ., strip.position = "top") +
   #xlim(as.Date("2017-01-01"), as.Date("2021-12-31")) +
   scale_fill_manual(
     values = c(
@@ -595,15 +595,16 @@ ggplot(yearly_area_long_df) +
   ) +
   #scale_x_date(breaks = seq.Date(as.Date("2017-01-01"), as.Date("2021-01-01"), by = "year"), labels = seq(2017,2021,by=1))+
   xlab("Year") +
-  ylab("Vessel days") 
+  ylab("Vessel days") +
+  theme(legend.position="bottom") 
 
 
 
   ggsave(
     here::here("outputs", "figures", "VIIRS", "Figure2.png"),
     plot=plot,
-    width = 20,
-    height = 15,
+    width = 18,
+    height = 13,
     units = "cm",
     dpi = 300
   )
