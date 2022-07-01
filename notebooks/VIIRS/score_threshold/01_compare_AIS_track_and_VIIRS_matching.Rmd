@@ -1,0 +1,488 @@
+---
+title: "Plot AIS track and VIIRS matching"
+output: html_document
+---
+
+# Setup
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(sf)
+# Establish connection to BigQuery project
+con <- DBI::dbConnect(
+  drv = bigrquery::bigquery(),
+  project = "world-fishing-827",
+  use_legacy_sql = FALSE
+)
+options(scipen = 20)
+
+bigrquery::bq_auth(email = "masaki@globalfishingwatch.org")
+
+
+land_sf <-
+  rnaturalearth::ne_countries(scale = "large", returnclass = "sf") %>% 
+  sf::st_make_valid()
+
+
+```
+
+
+
+
+
+
+# Define function
+
+
+```{r}
+get_and_plot_ais_viirs <-
+  function(YYYY_MM_DD, lat, lon, r, hours = 5) {
+    
+    
+    ####################################
+    # bbox of data
+    lat_max <- lat + r
+    lat_min <- lat - r
+    lon_max <- lon + r
+    lon_min <- lon - r
+    
+    
+    # GET VIIRS-AIS matching
+    query_viirs <- glue::glue(readr::read_file("get_viirs.sql"))
+    viirs_matching_df <- DBI::dbGetQuery(con, query_viirs)
+    
+    
+    # GET AIS tracks
+    # get AIS signal before and after `buffer_hours` from VIIRS timing
+    buffer_hours <- hours
+    time_range <-
+      viirs_matching_df %>% pull(detect_timestamp) %>% range()
+    start_datetime <-
+      (time_range[1] - buffer_hours * 60 * 60) %>%
+      format(format = "%Y-%m-%d %H:%M:%S")
+    end_datetime <-
+      (time_range[2] + buffer_hours * 60 * 60) %>%
+      format(format = "%Y-%m-%d %H:%M:%S")
+    
+    query_ais <- glue::glue(readr::read_file("get_ais.sql"))
+    ais_df <- DBI::dbGetQuery(con, query_ais)
+    
+    
+    ##################################################
+    # PLOT
+    plot_ais_viirs(
+      viirs = viirs_matching_df,
+      ais = ais_df,
+      plot_hours = hours,
+      surfix = "viirs_ais_",
+      land_sf = NULL,
+      only_matched_ais = TRUE,
+      width = 20,
+      height = 20,
+      ais_size = 0.01,
+      viirs_size = 0.5,
+      file_type = "png",
+      lat_min,
+      lat_max,
+      lon_min,
+      lon_max
+    )
+    
+  }
+
+
+
+plot_ais_viirs <-
+  function(viirs,
+           ais,
+           surfix = "ais_viis",
+           plot_hours = 5,
+           land_sf = NULL,
+           only_matched_ais = FALSE,
+           width=120,
+           height=60,
+           ais_size=0.01,
+           viirs_size=0.5,
+           file_type="pdf",
+           lat_min,
+           lat_max,
+           lon_min,
+           lon_max) {
+
+    
+    ssvid_veesel_class <-
+      ais %>%
+      select(ssvid, best_vessel_class, best_flag, label) %>%
+      distinct()
+    
+    
+    if (!is.null(land_sf)) {
+      land_sf <-
+        sf::st_crop(
+          land_sf,
+          xmin = lon_min,
+          ymin = lat_min,
+          xmax = lon_max,
+          ymax = lat_max
+        )
+    }
+    
+    
+    
+    # Set time range to display AIS tracks
+    time_range <- viirs %>% pull(detect_timestamp) %>% range()
+    
+    
+    s_datetime <-
+      (time_range[1] - plot_hours * 60 * 60)
+    e_datetime <-
+      (time_range[2] + plot_hours * 60 * 60)
+    
+    
+    
+    # modified VIIRS data to combine with AIS tracks
+    v <-
+      viirs %>%
+      mutate(
+        timestamp = detect_timestamp,
+        lat = detect_lat,
+        lon = detect_lon,
+        type = "VIIRS"
+      ) %>%
+      select(date,
+             ssvid,
+             seg_id,
+             timestamp,
+             lat,
+             lon,
+             type,
+             detect_id,
+             QF_Detect,
+             score) %>%
+      filter(!is.na(ssvid)) %>%
+      left_join(ssvid_veesel_class, by = "ssvid")
+    
+    
+    
+    # modified AIS track data to combine with VIIRS points
+    a <-
+      ais %>%
+      select(
+        date,
+        ssvid,
+        seg_id,
+        timestamp,
+        lat,
+        lon,
+        type,
+        best_flag,
+        best_vessel_class,
+        label,
+        source,
+        receiver_type,
+        receiver,
+      ) %>%
+      filter(between(timestamp, s_datetime, e_datetime)) %>%
+      arrange(seg_id, timestamp) %>%
+      mutate(vessel_class  = case_when(
+        best_vessel_class %in% c(
+          "fishing",
+          "other_purse_seines",
+          "other_seines",
+          "pole_and_line",
+          "purse_seines",
+          "seiners",
+          "set_gillnets",
+          "set_longlines",
+          "squid_jigger",
+          "trawlers",
+          "tuna_purse_seines"
+        ) ~ "fishing",
+        TRUE ~ "non-fishing"
+      ))
+    
+    
+    
+    if (only_matched_ais) {
+      ssvid_matched <-
+        v %>%
+        filter(!is.na(ssvid)) %>%
+        pull(ssvid) %>%
+        unique()
+  
+      a <-
+        a %>%
+        filter(ssvid %in% ssvid_matched)
+    }
+    
+    
+    
+    variables <-
+      c(
+        "date",
+        "ssvid",
+        "seg_id",
+        "timestamp",
+        "lat",
+        "lon",
+        "type",
+        "best_vessel_class",
+        "best_flag"
+      )
+    
+    
+    # Combine AIS tracks and VIIRS points
+    av <-
+      bind_rows(a %>% select(one_of(variables)), v %>% select(one_of(variables))) %>%
+      arrange(seg_id, timestamp)
+    
+    
+    
+    
+    # VIIRS points
+    vv <-
+      viirs %>%
+      mutate(
+        timestamp = detect_timestamp,
+        lat = detect_lat,
+        lon = detect_lon,
+        type = "VIIRS"
+      ) %>%
+      select(date,
+             ssvid,
+             seg_id,
+             timestamp,
+             lat,
+             lon,
+             type,
+             detect_id,
+             QF_Detect,
+             score) %>%
+      mutate(
+        match_type = case_when(
+          is.na(score) ~ "score_NA",
+          score > 10 ^ 0 ~ "score > 10^-0",
+          score > 10 ^ -1 ~ "score > 10^-1",
+          score > 10 ^ -2 ~ "score > 10^-2",
+          score > 10 ^ -3 ~ "score > 10^-3",
+          score > 10 ^ -4 ~ "score > 10^-4",
+          score > 10 ^ -5 ~ "score <= 10^-4",
+          score > 10 ^ -6 ~ "score <= 10^-4",
+          score <= 10 ^ -6 ~ "score <= 10^-4"
+        )
+      ) %>% 
+      mutate(
+        match_type = factor(match_type, 
+                            levels = c(
+                              "score > 10^-0",
+                              "score > 10^-1",
+                              "score > 10^-2",
+                              "score > 10^-3",
+                              "score > 10^-4",
+                              "score <= 10^-4",
+                              "score_NA"
+                              
+                              
+                            ))
+        
+        
+      )
+    
+    
+    
+    
+    
+    viirs_color <- c(
+      "score > 10^-0" = "red",
+      "score > 10^-1" = "orange",
+      "score > 10^-2" = "yellow",
+      "score > 10^-3" = "green",
+      "score > 10^-4" = "blue",
+      # "score > 10^-5" = "blue",
+      # "score > 10^-6" = "blue",
+      # "score <= 10^-6" = "blue",
+      "score <= 10^-4" = "purple",
+      "score_NA" = "black"
+      
+    )
+    
+    
+    
+    
+    filename <-
+      paste0(
+        surfix,
+        "_",
+        YYYY_MM_DD,
+        "_lat_",
+        lat_min,
+        "_",
+        lat_max,
+        "_lon_",
+        lon_min,
+        "_",
+        lon_max,
+        "_.",
+        file_type
+      )
+    
+    
+    
+    
+    
+    title <- paste0("Date: ", YYYY_MM_DD)
+    subtitle <- paste0("Lat ", lat_min, " ~ ",lat_max, ", Lon ", lon_min, " ~ ", lon_max)
+    
+    # PLOTTNG
+    p <- ggplot()
+    
+    if (!is.null(land_sf)) {
+      p <-
+        p +
+        geom_sf(data = land_sf)
+    }
+    
+    p <-
+      p +
+      
+      # AIS track
+      geom_path(data = av,
+                aes(lon, lat, group = seg_id),
+                color = "gray22",
+                
+                size = ais_size) +
+      
+      # AIS points
+      # geom_point(
+      #   data = a,
+      #   aes(lon, lat),
+      #   color = "gray22",
+      #   pch = 16,
+      #   size = ais_size
+      # ) +
+
+      ggnewscale::new_scale_color() +
+      
+      # VIIRS point
+      geom_point(
+        data = vv,
+        aes(lon, lat, color = match_type),
+        pch = 18,
+        size = viirs_size
+      ) +
+      scale_color_manual(values = viirs_color) +
+      ggtitle(title, subtitle) +
+      theme_bw() +
+      guides(color = guide_legend(override.aes = list(size = 5)))
+    
+    
+    
+      ggsave(
+        filename = filename,
+        plot = p,
+        width = width,
+        height  = height,
+        units = "cm",
+        dpi = 300
+      )
+    
+  }
+```
+
+
+
+
+# plot
+
+
+```{r}
+YYYY_MM_DD <- "2019-03-04"
+lat <- -1.5
+lon <- -99.5
+r <- 0.5
+get_and_plot_ais_viirs(YYYY_MM_DD, lat, lon, r, hours = 5)
+
+
+YYYY_MM_DD <- "2019-09-27"
+lat <- 42.5
+lon <- 162
+r <- 0.5
+
+get_and_plot_ais_viirs(YYYY_MM_DD, lat, lon, r, hours = 5)
+
+################
+YYYY_MM_DD <- "2019-11-26"
+lat <- -17.75
+lon <- -81.5
+r <- 0.5
+
+get_and_plot_ais_viirs(YYYY_MM_DD, lat, lon, r, hours = 5)
+
+
+YYYY_MM_DD <- "2019-11-26"
+lat <- -19.5
+lon <- -80.5
+r <- 0.5
+get_and_plot_ais_viirs(YYYY_MM_DD, lat, lon, r, hours = 5)
+
+
+
+################
+YYYY_MM_DD <- "2020-11-13"
+lat <- -15.5
+lon <- -83.5
+r <- 0.5
+
+get_and_plot_ais_viirs(YYYY_MM_DD, lat, lon, r, hours = 5)
+
+################
+YYYY_MM_DD <- "2019-08-04"
+lat <- 41.25
+lon <- 160.75
+r <- 0.25
+
+get_and_plot_ais_viirs(YYYY_MM_DD, lat, lon, r, hours = 5)
+
+################
+YYYY_MM_DD <- "2020-12-04"
+lat <- 34.5
+lon <- 128.75
+r <- 0.25
+
+get_and_plot_ais_viirs(YYYY_MM_DD, lat, lon, r, hours = 5)
+
+################
+YYYY_MM_DD <- "2019-04-15"
+lat <- -49.75
+lon <- -60.25
+r <- 0.5
+
+
+get_and_plot_ais_viirs(YYYY_MM_DD, lat, lon, r, hours = 5)
+
+
+
+
+YYYY_MM_DD <- "2020-11-19"
+lat <- 41
+lon <- 150
+r <- 0.5
+
+get_and_plot_ais_viirs(YYYY_MM_DD, lat, lon, r, hours = 5)
+
+
+YYYY_MM_DD <- "2019-08-04"
+lat <- 41
+lon <- 160.5
+r <- 0.5
+get_and_plot_ais_viirs(YYYY_MM_DD, lat, lon, r, hours = 5)
+
+
+YYYY_MM_DD <- "2019-04-15"
+lat <- -50
+lon <- -60
+r <- 0.5
+get_and_plot_ais_viirs(YYYY_MM_DD, lat, lon, r, hours = 5)
+```
+
