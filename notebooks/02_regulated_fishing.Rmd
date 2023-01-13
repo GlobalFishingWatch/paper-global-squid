@@ -13,7 +13,7 @@ library(sf)
 library(dplyr)
 library(ggplot2)
 library(fishwatchr)
-figure_version = 'v20220525'
+figure_version = 'v20230113'
 ```
 
 
@@ -37,13 +37,14 @@ squid_regions_and_eezs <- sf::read_sf(here::here('data','geodata','simple_merged
   scale_color_manual('', values = c('#204280','#F8BA47','#EE6256')) +
   theme_gfw_map(theme = 'light'))
 
-  save_plots(final_reg_regions_map, 
-           file_name = 'final_reg_regions_map_v20220525',
+  save_plots(final_reg_regions_map,
+           file_name = glue::glue('final_reg_regions_map_{figure_version}'),
            plot_width = 200,
            plot_height = 120,
            units = 'mm',
-           dpi = 300,
-           figure_version = figure_version)
+           dpi = 600,
+           figure_version = figure_version,
+  output_type = 'png')
 ```
 
 
@@ -188,11 +189,12 @@ squid_regulatory_positions_filtered %>%
 
 ```{r}
 save_plots(total_fishing_hours_reg, 
-           file_name = 'total_fishing_hours_reg_v20220525',
+           file_name = glue::glue('total_fishing_hours_reg_{figure_version}'),
            plot_width = 200,
            plot_height = 80,
            units = 'mm',
-           dpi = 300,
+           dpi = 600,
+           output_type = 'png',
            figure_version = figure_version)
 ```
 
@@ -226,11 +228,12 @@ save_plots(total_fishing_hours_reg,
 
 ```{r}
 save_plots(total_fishing_hours_by_reg_region, 
-           file_name = 'total_fishing_hours_reg_stacked_v20220525',
+           file_name = glue::glue('total_fishing_hours_reg_stacked_{figure_version}'),
            plot_width = 120,
            plot_height = 120,
            units = 'mm',
-           dpi = 300,
+           dpi = 600, 
+           output_type = 'png',
            figure_version = figure_version)
 ```
 
@@ -324,11 +327,12 @@ table_of_data <- squid_regulatory_positions_filtered %>%
 
 ```{r}
 save_plots(fraction_fish_hrs_region, 
-           file_name = 'frac_fishing_hours_reg_national_eez_v20220525',
+           file_name = glue::glue('frac_fishing_hours_reg_national_eez_{figure_version}'),
            plot_width = 125,
            plot_height = 130,
            units = 'mm',
-           dpi = 300,
+           dpi = 600, 
+           output_type = 'png',
            figure_version = figure_version)
 ```
 
@@ -403,7 +407,7 @@ ggplot() +
 
 ```{r}
 save_plots(fishing_in_eezs_byflag, 
-           file_name = 'fishing_hours_ineez_byflag_v20220525',
+           file_name = glue::glue('fishing_hours_ineez_byflag_{figure_version}'),
            output_type = '.png',
            plot_width = 160,
            plot_height = 130,
@@ -543,12 +547,12 @@ ggplot() +
 
 ```{r}
 save_plots(fishing_in_eez_final, 
-           file_name = 'fishing_in_eezs_byflag_ARG_v20220525',
+           file_name = glue::glue('fishing_in_eezs_byflag_ARG_{figure_version}'),
            output_type = 'png',
            plot_width = 250,
            plot_height = 120,
            units = 'mm',
-           dpi = 300,
+           dpi = 600,
            figure_version = figure_version)
 ```
 

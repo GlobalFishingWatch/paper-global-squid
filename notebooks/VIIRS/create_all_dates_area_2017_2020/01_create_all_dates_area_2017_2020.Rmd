@@ -17,7 +17,7 @@ con <- DBI::dbConnect(
 )
 options(scipen = 20)
 
-bigrquery::bq_auth(email = "masaki@globalfishingwatch.org")
+# bigrquery::bq_auth(email = "masaki@globalfishingwatch.org")
 
 ```
 
@@ -66,7 +66,7 @@ all_dates_area_df <-
     ),
     
     # creating half-monthly, 1-monthly, bi-monthly, tri-monthly, quad-monthly columns
-    year_month0.5 =
+    year_month05 =
       paste0(
         #YYYY
         year,

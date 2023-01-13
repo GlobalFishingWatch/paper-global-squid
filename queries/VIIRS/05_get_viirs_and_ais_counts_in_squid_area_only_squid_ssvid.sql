@@ -38,7 +38,7 @@ select
     CAST(year_month4 AS STRING) as year_month4, --# 4 month period (1-2-3-4), (5-6-7-8), (9-10-11-12)
     CAST(year_month6 AS STRING) as year_month6  --# 6 month period (1-2-3-4-5-6), (7-8-9-1-0-11-12)
 from
-    `scratch_masaki.all_dates_area_2017_2020`
+    `scratch_nate.all_dates_area_2017_2020`
 ),
 
 
