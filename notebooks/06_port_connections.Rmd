@@ -7,6 +7,9 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+```{r}
+library(dplyr)
+```
 
 ```{r}
 regions <- c("nw_pacific","se_pacific", "sw_atlantic", "nw_indian"
@@ -51,3 +54,45 @@ carrier_visit_aoi_port_counts <- purrr::set_names(
   nm = regions
 )
 ```
+
+
+# Percentage of the vessel operating in SE Pacific that visited Peruvian ports
+```{r}
+distinct_ssvid_peru_port <- squid_fleet_port_visits_aoi_2 %>% 
+  filter(flag %in% c('CHN')) %>%
+    filter(year <= 2020 & year >= 2017) %>%
+    select(ssvid, aoi, start_anchorage_iso3) %>%
+    filter(aoi == 'se_pacific' & start_anchorage_iso3 == 'PER') %>%
+    distinct(ssvid) %>%
+    rbind(  squid_fleet_port_visits_aoi_2 %>% 
+            filter(flag %in% c('CHN')) %>%
+            filter(year <= 2020 & year >= 2017) %>%
+            select(ssvid, aoi, end_anchorage_iso3) %>%
+            filter(aoi == 'se_pacific' & end_anchorage_iso3 == 'PER') %>%
+            distinct(ssvid)) %>%
+  distinct(ssvid) %>%
+  count()
+
+
+
+distinct_ssvid <- squid_fleet_port_visits_aoi_2 %>% 
+  filter(flag %in% c('CHN')) %>%
+    filter(year <= 2020 & year >= 2017) %>%
+    select(ssvid, aoi, start_anchorage_iso3) %>%
+    filter(aoi == 'se_pacific') %>%
+    distinct(ssvid) %>%
+    rbind(  squid_fleet_port_visits_aoi_2 %>% 
+            filter(flag %in% c('CHN')) %>%
+            filter(year <= 2020 & year >= 2017) %>%
+            select(ssvid, aoi, end_anchorage_iso3) %>%
+            filter(aoi == 'se_pacific') %>%
+            distinct(ssvid)) %>%
+  distinct(ssvid) %>%
+  count()
+
+# fraction
+distinct_ssvid_peru_port/distinct_ssvid
+```
+
+
+

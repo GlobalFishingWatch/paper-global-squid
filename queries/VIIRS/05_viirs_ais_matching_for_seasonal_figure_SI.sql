@@ -9,9 +9,9 @@
 -- CREATE TEMP FUNCTION NL_HOUR_THRESHOLD() AS (1);
 
 
-CREATE TEMP FUNCTION RAD_THRESHOLD() AS ({RAD_THRESHOLD});
-CREATE TEMP FUNCTION SCORE_THRESHOLD() AS ({SCORE_THRESHOLD});
-CREATE TEMP FUNCTION NL_HOUR_THRESHOLD() AS ({NL_HOUR_THRESHOLD});
+CREATE TEMP FUNCTION RAD_THRESHOLD() AS (10);
+CREATE TEMP FUNCTION SCORE_THRESHOLD() AS (0.01);
+CREATE TEMP FUNCTION NL_HOUR_THRESHOLD() AS (1);
 
 
 
@@ -30,15 +30,14 @@ WITH
 # This table is used to make sure the final result contains all the dates and areas.
 all_dates_area as (
 select
-    * except(year_month6, year_month4, year_month3, year_month2, year_month1),
-    CAST(year_month05 AS STRING) AS year_half_month,
-    CAST(year_month1 AS STRING) as year_month1, --#
-    CAST(year_month2 AS STRING) as year_month2, --# 2 month period
-    CAST(year_month3 AS STRING) as year_month3, --# 3 month period == quater
-    CAST(year_month4 AS STRING) as year_month4, --# 4 month period (1-2-3-4), (5-6-7-8), (9-10-11-12)
-    CAST(year_month6 AS STRING) as year_month6  --# 6 month period (1-2-3-4-5-6), (7-8-9-1-0-11-12)
+    * --except(year_month6, year_month4, year_month3, year_month2, year_month1),
+    --CAST(year_month1 AS STRING) as year_month1, #
+    --CAST(year_month2 AS STRING) as year_month2, # 2 month period
+    --CAST(year_month3 AS STRING) as year_month3, # 3 month period == quater
+    --CAST(year_month4 AS STRING) as year_month4, # 4 month period (1-2-3-4), (5-6-7-8), (9-10-11-12)
+    --CAST(year_month6 AS STRING) as year_month6  # 6 month period (1-2-3-4-5-6), (7-8-9-1-0-11-12)
 from
-    `scratch_masaki.all_dates_area_2017_2020`
+    `scratch_nate.all_dates_area_2017_2020`
 ),
 
 
@@ -49,15 +48,15 @@ select
     EXTRACT(YEAR from date) as year,
     LPAD(CAST(EXTRACT(MONTH from date) AS STRING), 2, '0') as month,
     IF(EXTRACT(DAY from date) <= 15, 'F', 'S' ) as half_month,
-    --year_half_month coulmn contains values like below
-    --202012F (First half of December 2020),
-    --202012S (Second half of December 2020)
+    # year_half_month coulmn contains values like below
+    # 202012F (First half of December 2020),
+    # 202012S (Second half of December 2020)
     CONCAT(EXTRACT(YEAR from date), LPAD(CAST(EXTRACT(MONTH from date) AS STRING), 2, '0'), IF(EXTRACT(DAY from date) <= 15, 'F', 'S' )) as year_half_month,
     *
 from
     `scratch_masaki.viirs_matching_squid_area_no_overlap_local_night_2017_2021_v20220512`
 where
-    --Extracting VBDs with radiance greater than the RAD_THRESHOLD
+    --# Extracting VBDs with radiance greater than the RAD_THRESHOLD
     Rad_DNB > RAD_THRESHOLD()
 ),
 
@@ -167,7 +166,7 @@ daily_counts as (
 
 select
     a.*,
-    * except(area, date, year_half_month, year_month1, year_month2, year_month3, year_month4, year_month6)
+    * except(area, date)--, year_half_month, year_month1, year_month2, year_month3, year_month4, year_month6)
 from
 
     all_dates_area a
@@ -195,11 +194,11 @@ select
     area,
     date,
     year_half_month,
-    year_month1,
-    year_month2,
-    year_month3,
-    year_month4,
-    year_month6,
+    --year_month1,
+    --year_month2,
+    --year_month3,
+    --year_month4,
+    --year_month6,
     count_viirs_total,
     --# We need to distinguish NULL and Zero for the count of VIIRS detection
     --# If we observe at least 1 VIIRS deteciton in the area then we can regard NULL value of the number of matched VIIRS as 0,
