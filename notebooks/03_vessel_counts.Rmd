@@ -19,7 +19,7 @@ con <- DBI::dbConnect(bigrquery::bigquery(),
                       project = "world-fishing-827", 
                       use_legacy_sql = FALSE)
 
-figure_version = 'v20220525'
+figure_version = 'v20230113'
 ```
 
 
