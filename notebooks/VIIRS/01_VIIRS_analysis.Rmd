@@ -15,11 +15,6 @@ con <- DBI::dbConnect(
   project = "world-fishing-827",
   use_legacy_sql = FALSE
 )
-options(scipen = 20)
-
-bigrquery::bq_auth(email = "masaki@globalfishingwatch.org")
-
-
 
 round1000 <- function(x){
   round(x*(10^-6),3)*10^6
@@ -351,7 +346,7 @@ daily_area_long_df <-
 
 
 
-plot <- 
+(plot <- 
 
 ggplot(daily_area_long_df) +
   geom_bar(aes(date, `Vessel count`, fill = Source),
@@ -372,6 +367,7 @@ ggplot(daily_area_long_df) +
     breaks = seq.Date(as.Date("2017-01-01"), as.Date("2021-01-01"), by = "year"),
     labels = seq(2017, 2021, by = 1)
   ) 
+)
 
 
   ggsave(filename="vessel_count_daily_by_region.png", plot=plot, width = 20, height = 15, units = "cm", dpi = 300)
@@ -452,7 +448,7 @@ half_monthly_area_long_df <-
   mutate(`Detection type` = Source)
 
 
-plot <- 
+(plot <- 
 ggplot(half_monthly_area_long_df) +
   geom_bar(aes(date, `Vessel count`, fill = Source),
            stat = "identity",
@@ -472,7 +468,7 @@ ggplot(half_monthly_area_long_df) +
     breaks = seq.Date(as.Date("2017-01-01"), as.Date("2021-01-01"), by = "year"),
     labels = seq(2017, 2021, by = 1)
   )
-
+)
 
 
 
@@ -575,7 +571,7 @@ yearly_area_long_df <-
   ))
                
                
-plot <-           
+(plot <-           
 ggplot(yearly_area_long_df) +
   geom_bar(aes(year, `Vessel count`, fill = Source),
            stat = "identity",
@@ -597,7 +593,7 @@ ggplot(yearly_area_long_df) +
   xlab("Year") +
   ylab("Vessel days") +
   theme(legend.position="bottom") 
-
+)
 
 
   ggsave(
@@ -606,7 +602,7 @@ ggplot(yearly_area_long_df) +
     width = 18,
     height = 13,
     units = "cm",
-    dpi = 300
+    dpi = 600
   )
 
 ```

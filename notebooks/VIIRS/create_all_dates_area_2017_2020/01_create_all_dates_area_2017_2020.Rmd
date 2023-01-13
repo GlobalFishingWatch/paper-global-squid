@@ -1,0 +1,133 @@
+---
+title: "VIIRS analysis"
+output: html_document
+---
+
+# Setup
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Establish connection to BigQuery project
+con <- DBI::dbConnect(
+  drv = bigrquery::bigquery(),
+  project = "world-fishing-827",
+  use_legacy_sql = FALSE
+)
+options(scipen = 20)
+
+bigrquery::bq_auth(email = "masaki@globalfishingwatch.org")
+
+```
+
+# Create dataframe containig all the dates and areas for analysis
+
+```{r}
+dates <- seq(as.Date("2017-01-01"), as.Date("2020-12-31"), by = "day")
+areas <- c("nw_indian", "nw_pacific", "se_pacific", "sw_atlantic")       
+
+# all date
+all_dates_area_df <-
+  tibble::tibble(expand.grid(
+    date = dates,
+    area = areas,
+    stringsAsFactors = FALSE
+  )) %>%
+  mutate(
+    year = lubridate::year(date),
+    month = lubridate::month(date),
+    
+    # every 2 months
+    month2 = case_when(
+      month %in% c(1, 2) ~ "0102",
+      month %in% c(3, 4) ~ "0304",
+      month %in% c(5, 6) ~ "0506",
+      month %in% c(7, 8) ~ "0708",
+      month %in% c(9, 10) ~ "0910",
+      month %in% c(11, 12) ~ "1112",
+    ),
+    month3 = case_when(
+      month %in% c(1, 2, 3) ~ "010203",
+      month %in% c(4, 5, 6) ~ "040506",
+      month %in% c(7, 8, 9) ~ "070809",
+      month %in% c(10, 11, 12) ~ "101112",
+    ),
+    
+    month4 = case_when(
+      month %in% c(1, 2, 3, 4) ~ "01020304",
+      month %in% c(5, 6, 7, 8) ~ "05060708",
+      month %in% c(9, 10, 11, 12) ~ "09101112",
+    ),
+    
+    month6 = case_when(
+      month %in% c(1, 2, 3, 4, 5, 6) ~ "010203040506",
+      month %in% c(7, 8, 9, 10, 11, 12) ~ "070809101112",
+    ),
+    
+    # creating half-monthly, 1-monthly, bi-monthly, tri-monthly, quad-monthly columns
+    year_month0.5 =
+      paste0(
+        #YYYY
+        year,
+        #MM
+        stringr::str_pad(month, 2, "left", "0"),
+        # F:First half, S:Second half
+        ifelse(lubridate::day(date) <= 15, "F", "S")
+      ),
+    year_month1 =
+      paste0(#YYYY
+        year,
+        #MM
+        stringr::str_pad(month, 2, "left", "0")),
+    year_month2 =
+      paste0(#YYYY
+        year,
+        #MM
+        month2),
+    year_month3 =
+      paste0(#YYYY
+        year,
+        #MM
+        month3),
+    year_month4 =
+      paste0(#YYYY
+        year,
+        #MM
+        month4),
+    year_month6 =
+      paste0(#YYYY
+        year,
+        #MM
+        month6)
+  ) %>% 
+  select(-year, -month, -month2, -month3, -month4, -month6)
+  
+
+```
+
+
+# Upload the dataframe to BigQuery
+
+method 1
+
+```{r}
+bq_tbl <- bigrquery::bq_table("world-fishing-827", "scratch_masaki", "all_dates_area_2017_2020")
+job <- bigrquery::bq_table_upload(bq_tbl, values = all_dates_area_df, quiet = FALSE)
+```
+
+method 2
+
+```{r}
+dbWriteTable(
+    con,
+    name = "scratch_masaki.all_dates_area_2017_2020", 
+    value = all_dates_area_df,        
+    overwrite=TRUE,     
+    append=FALSE,       
+    row.names=FALSE      
+    )
+```
+
+
+
