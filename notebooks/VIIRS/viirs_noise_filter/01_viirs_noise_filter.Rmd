@@ -8,6 +8,7 @@ output: github_document
 ```{r}
 library(ggplot2)
 library(dplyr)
+library(ggnewscale)
 
 # Establish connection to BigQuery project
 con <- DBI::dbConnect(
