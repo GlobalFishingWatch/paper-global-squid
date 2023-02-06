@@ -4,6 +4,9 @@
 # Code and analysis for Global Squid Paper
 
 <!-- badges: start -->
+
+[![DOI](https://zenodo.org/badge/496365913.svg)](https://zenodo.org/badge/latestdoi/496365913)
+
 <!-- badges: end -->
 
 The goal of paper-global-squid is to describe all code and analyses used
